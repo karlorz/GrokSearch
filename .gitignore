@@ -1,0 +1,4 @@
+__pycache__/
+.codex/
+mcp.json
+.env
