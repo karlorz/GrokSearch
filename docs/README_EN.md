@@ -144,13 +144,17 @@ You can also configure additional environment variables in the `env` field:
 | `GROK_SEARCH_MCP_HOST` | No | `127.0.0.1` | HTTP bind address; loopback default, never `0.0.0.0` unless you set it |
 | `GROK_SEARCH_MCP_PORT` | No | `8800` | HTTP port (not 80/8080/6080) |
 | `GROK_SEARCH_MCP_PATH` | No | `/mcp` | HTTP MCP path |
-| `GROK_SEARCH_MCP_TOKEN` | Required for HTTP | - | Inbound Bearer. HTTP only; missing token fail-closes. Do not reuse `GUDA_API_KEY` / Grok / Tavily / Firecrawl keys |
+| `GROK_SEARCH_MCP_TOKEN` | Required for static HTTP | - | Inbound Bearer (static mode). HTTP only; missing token fail-closes if verify mode is not configured. Do not reuse `GUDA_API_KEY` / Grok / Tavily / Firecrawl keys |
+| `GROK_SEARCH_MCP_VERIFY_URL` | Optional for gateway verify | - | Upstream key verification endpoint (e.g. `http://127.0.0.1:8080/internal/keys/verify`). Enables gateway verification mode (takes precedence over `GROK_SEARCH_MCP_TOKEN`) |
+| `GROK_SEARCH_MCP_INTERNAL_TOKEN` | Required for gateway verify | - | Shared secret sent in the `X-Internal-Token` header to the verification endpoint |
 
 > **Note**: When `GUDA_API_KEY` is set, all `GROK_API_URL`/`GROK_API_KEY`/`TAVILY_*`/`FIRECRAWL_*` variables become optional as they are auto-derived from `GUDA_BASE_URL`. Explicitly set variables take higher priority.
 
 ### Optional HTTP MCP (stdio stays default)
 
-The server still defaults to FastMCP `stdio`. For local HTTP:
+The server still defaults to FastMCP `stdio`. For local HTTP or production gateway layouts:
+
+#### 1. Local Development: Static Token Mode
 
 ```bash
 export GROK_SEARCH_MCP_TOKEN="$(openssl rand -hex 32)"
@@ -160,6 +164,20 @@ GROK_SEARCH_MCP_TRANSPORT=http \
 ```
 
 It binds `http://127.0.0.1:8800/mcp` and checks `Authorization: Bearer <GROK_SEARCH_MCP_TOKEN>`. Missing or wrong header returns 401. stdio does not use this token.
+
+#### 2. Production Deployment: Gateway Token Verification Mode (kr01 loopback)
+
+```bash
+GROK_SEARCH_MCP_TRANSPORT=http \
+  GROK_SEARCH_MCP_VERIFY_URL="http://127.0.0.1:8080/internal/keys/verify" \
+  GROK_SEARCH_MCP_INTERNAL_TOKEN="your-internal-token" \
+  uv run grok-search
+```
+
+In verify mode, GrokSearch sends a POST request with header `X-Internal-Token` to the upstream verification URL. It caches negative responses (401) with a ~60s TTL using SHA256 hashed keys (raw tokens are never stored). Transient errors (403, 5xx, timeouts) are not negatively cached to avoid locking out valid keys.
+
+> **Operator Note**:  
+> Upstream x.ai web → grok2api can occasionally make gateway `POST /grok/v1/chat/completions` return an empty `content` body (observed with models like `grok-4.3-fast`). If `/mcp` initialize and tools/list succeed but `web_search` answers are blank, debug grok2api or model routing rather than MCP bearer authentication.
 
 `cursor-plugin/` is an in-repo local Cursor plugin example (`type: "http"`, required `variables.GROK_SEARCH_MCP_TOKEN`, `"mcpServers": "./mcp.json"`). It is not a marketplace listing. See `cursor-plugin/README.md`.
 
