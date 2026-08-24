@@ -167,13 +167,17 @@ claude mcp add-json grok-search --scope user '{
 | `GROK_SEARCH_MCP_HOST` | ❌ | `127.0.0.1` | HTTP 绑定地址；默认 loopback，不会默认 `0.0.0.0` |
 | `GROK_SEARCH_MCP_PORT` | ❌ | `8800` | HTTP 端口（避开 80/8080/6080） |
 | `GROK_SEARCH_MCP_PATH` | ❌ | `/mcp` | HTTP MCP 路径 |
-| `GROK_SEARCH_MCP_TOKEN` | HTTP 必填 | - | 入站 Bearer。仅 HTTP 使用；缺失则 fail-closed。不要复用 `GUDA_API_KEY` / Grok / Tavily / Firecrawl 密钥 |
+| `GROK_SEARCH_MCP_TOKEN` | 静态 HTTP 模式必填 | - | 入站 Bearer（静态模式）。仅 HTTP 使用；缺失且未配置验证网关时 fail-closed。不要复用 `GUDA_API_KEY` / Grok / Tavily / Firecrawl 密钥 |
+| `GROK_SEARCH_MCP_VERIFY_URL` | 网关验证模式可选 | - | 上游密钥验证端点（如 `http://127.0.0.1:8080/internal/keys/verify`）。配置后进入网关验证模式（优先级高于 `GROK_SEARCH_MCP_TOKEN`） |
+| `GROK_SEARCH_MCP_INTERNAL_TOKEN` | 网关验证模式必填 | - | 发往验证端点的内部共享鉴权头 `X-Internal-Token` 值 |
 
 > **注意**：配置了 `GUDA_API_KEY` 后，`GROK_API_URL`/`GROK_API_KEY`/`TAVILY_*`/`FIRECRAWL_*` 均为可选，系统自动从 `GUDA_BASE_URL` 派生。显式设置的独立变量优先级更高。
 
 ### 可选 HTTP MCP（stdio 仍是默认）
 
-默认仍走 FastMCP `stdio`。需要本机 HTTP 时：
+默认仍走 FastMCP `stdio`。需要本机 HTTP 时支持两种鉴权模式：
+
+#### 1. 本地开发：静态 Token 模式
 
 ```bash
 export GROK_SEARCH_MCP_TOKEN="$(openssl rand -hex 32)"
@@ -183,6 +187,20 @@ GROK_SEARCH_MCP_TRANSPORT=http \
 ```
 
 服务监听 `http://127.0.0.1:8800/mcp`，校验 `Authorization: Bearer <GROK_SEARCH_MCP_TOKEN>`；缺头或错 token 返回 401。stdio 不使用该 token。
+
+#### 2. 生产部署：网关 Token 验证模式（kr01 loopback）
+
+```bash
+GROK_SEARCH_MCP_TRANSPORT=http \
+  GROK_SEARCH_MCP_VERIFY_URL="http://127.0.0.1:8080/internal/keys/verify" \
+  GROK_SEARCH_MCP_INTERNAL_TOKEN="your-internal-token" \
+  uv run grok-search
+```
+
+在此模式下，GrokSearch 会通过内部 POST 请求（携带 `X-Internal-Token` 头）向上游网关验证客户端传入的 Bearer Token，并使用负向缓存（TTL ~60s）防御无效 Token 刷榜，同时在网关异常或 403/5xx/超时时不负向缓存以保证高可用。
+
+> **运维提示（Operator Note）**：  
+> 上游 x.ai web → grok2api 网关在特定模型（如 `grok-4.3-fast`）可能偶发使 `POST /grok/v1/chat/completions` 返回空 `content` 正文。若 `/mcp` 的 `initialize` 与 `tools/list` 正常工作但 `web_search` 返回内容为空，请排查 grok2api / 上游模型路由，而非 MCP Bearer 鉴权层。
 
 仓库内 `cursor-plugin/` 是本地 Cursor 插件示例（`type: "http"`，`variables.GROK_SEARCH_MCP_TOKEN` 必填，`mcpServers` 指向 `./mcp.json`），不是 marketplace。详见 `cursor-plugin/README.md`。
 
