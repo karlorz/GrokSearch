@@ -10,7 +10,10 @@ class Config:
         '"git+https://github.com/GuDaStudio/GrokSearch","grok-search"],'
         '"env":{"GUDA_API_KEY":"your-guda-api-key"}}\''
     )
-    _DEFAULT_MODEL = "grok-4.20-beta"
+    _DEFAULT_MODEL = "grok-4.3-fast"
+    _DEPRECATED_MODELS = {
+        "grok-4.20-beta": "grok-4.3-fast",
+    }
     _DEFAULT_GUDA_BASE_URL = "https://code.guda.studio"
 
     def __new__(cls):
@@ -37,7 +40,16 @@ class Config:
             return {}
         try:
             with open(self.config_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                if not isinstance(data, dict):
+                    return {}
+                if "model" in data and self.is_deprecated_model(data["model"]):
+                    data["model"] = self.canonicalize_model(data["model"])
+                    try:
+                        self._save_config_file(data)
+                    except Exception:
+                        pass
+                return data
         except (json.JSONDecodeError, IOError):
             return {}
 
@@ -153,6 +165,20 @@ class Config:
         tmp_log_dir.mkdir(parents=True, exist_ok=True)
         return tmp_log_dir
 
+    @classmethod
+    def canonicalize_model(cls, model: str | None) -> str | None:
+        """Canonicalize deprecated model aliases to their current equivalents."""
+        if not model:
+            return model
+        return cls._DEPRECATED_MODELS.get(model, model)
+
+    @classmethod
+    def is_deprecated_model(cls, model: str | None) -> bool:
+        """Check whether the given model name is a deprecated alias."""
+        if not model:
+            return False
+        return model in cls._DEPRECATED_MODELS
+
     def _apply_model_suffix(self, model: str) -> str:
         try:
             url = self.grok_api_url
@@ -167,19 +193,21 @@ class Config:
         if self._cached_model is not None:
             return self._cached_model
 
-        model = (
+        raw_model = (
             os.getenv("GROK_MODEL")
             or self._load_config_file().get("model")
             or self._DEFAULT_MODEL
         )
-        self._cached_model = self._apply_model_suffix(model)
+        canonical = self.canonicalize_model(raw_model) or self._DEFAULT_MODEL
+        self._cached_model = self._apply_model_suffix(canonical)
         return self._cached_model
 
     def set_model(self, model: str) -> None:
+        canonical = self.canonicalize_model(model) or model
         config_data = self._load_config_file()
-        config_data["model"] = model
+        config_data["model"] = canonical
         self._save_config_file(config_data)
-        self._cached_model = self._apply_model_suffix(model)
+        self._cached_model = self._apply_model_suffix(canonical)
 
     @staticmethod
     def _mask_api_key(key: str) -> str:
@@ -200,6 +228,11 @@ class Config:
             api_key_masked = "未配置"
             config_status = f"❌ 配置错误: {str(e)}"
 
+        raw_env_model = os.getenv("GROK_MODEL")
+        deprecation_note = None
+        if self.is_deprecated_model(raw_env_model):
+            deprecation_note = f"'{raw_env_model}' 已废弃，已自动规范化为 '{self.canonicalize_model(raw_env_model)}'"
+
         info = {
             "GUDA_BASE_URL": self.guda_base_url,
             "GUDA_API_KEY": self._mask_api_key(self.guda_api_key) if self.guda_api_key else "未配置",
@@ -217,6 +250,8 @@ class Config:
             "FIRECRAWL_API_KEY": self._mask_api_key(self.firecrawl_api_key) if self.firecrawl_api_key else "未配置",
             "config_status": config_status,
         }
+        if deprecation_note:
+            info["model_deprecation"] = deprecation_note
         return info
 
 config = Config()
