@@ -150,7 +150,7 @@ claude mcp add-json grok-search --scope user '{
 | `GUDA_BASE_URL` | ❌ | `https://code.guda.studio` | GuDa 服务基础地址 |
 | `GROK_API_URL` | ❌ | `{GUDA_BASE_URL}/grok/v1` | Grok API 地址（OpenAI 兼容格式），显式设置时覆盖 GuDa 派生值 |
 | `GROK_API_KEY` | ❌ | `{GUDA_API_KEY}` | Grok API 密钥，显式设置时覆盖 GuDa 派生值 |
-| `GROK_MODEL` | ❌ | `grok-4.20-beta` | 默认模型（设置后优先于 `~/.config/grok-search/config.json`） |
+| `GROK_MODEL` | ❌ | `grok-4.3-fast` | 默认模型（设置后优先于 `~/.config/grok-search/config.json`；旧别名 `grok-4.20-beta` 已废弃，运行时会自动规范化为 `grok-4.3-fast`） |
 | `TAVILY_API_KEY` | ❌ | `{GUDA_API_KEY}` | Tavily API 密钥（用于 web_search extras / web_fetch / web_map） |
 | `TAVILY_API_URL` | ❌ | `{GUDA_BASE_URL}/tavily` | Tavily API 地址 |
 | `TAVILY_ENABLED` | ❌ | `true` | 是否启用 Tavily（search extras / extract / map） |

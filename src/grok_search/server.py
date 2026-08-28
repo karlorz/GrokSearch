@@ -578,17 +578,24 @@ async def switch_model(
     import json
 
     try:
+        is_deprecated = config.is_deprecated_model(model)
         previous_model = config.grok_model
         config.set_model(model)
         current_model = config.grok_model
+
+        msg = f"模型已从 {previous_model} 切换到 {current_model}"
+        if is_deprecated:
+            msg += f"（注意：'{model}' 已废弃，已自动规范化为 '{current_model}'）"
 
         result = {
             "status": "✅ 成功",
             "previous_model": previous_model,
             "current_model": current_model,
-            "message": f"模型已从 {previous_model} 切换到 {current_model}",
+            "message": msg,
             "config_file": str(config.config_file)
         }
+        if is_deprecated:
+            result["deprecation_note"] = f"'{model}' 已废弃，已自动规范化为 '{current_model}'"
 
         return json.dumps(result, ensure_ascii=False, indent=2)
 

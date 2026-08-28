@@ -127,7 +127,7 @@ You can also configure additional environment variables in the `env` field:
 | `GUDA_BASE_URL` | No | `https://code.guda.studio` | GuDa service base URL |
 | `GROK_API_URL` | No | `{GUDA_BASE_URL}/grok/v1` | Grok API endpoint (OpenAI-compatible), overrides GuDa-derived value |
 | `GROK_API_KEY` | No | `{GUDA_API_KEY}` | Grok API key, overrides GuDa-derived value |
-| `GROK_MODEL` | No | `grok-4.20-beta` | Default model (takes precedence over `~/.config/grok-search/config.json` when set) |
+| `GROK_MODEL` | No | `grok-4.3-fast` | Default model (takes precedence over `~/.config/grok-search/config.json` when set; legacy alias `grok-4.20-beta` is deprecated and automatically canonicalized to `grok-4.3-fast` at runtime) |
 | `TAVILY_API_KEY` | No | `{GUDA_API_KEY}` | Tavily API key (for web_search extras / web_fetch / web_map) |
 | `TAVILY_API_URL` | No | `{GUDA_BASE_URL}/tavily` | Tavily API endpoint |
 | `TAVILY_ENABLED` | No | `true` | Enable Tavily (search extras / extract / map) |
