@@ -4,30 +4,7 @@ import pytest
 
 from grok_search.config import Config, config
 
-
-@pytest.fixture(autouse=True)
-def isolate_config(monkeypatch, tmp_path):
-    """Isolate HOME and environment variables, resetting Config singleton state."""
-    # Ensure home is redirected to tmp_path
-    monkeypatch.setenv("HOME", str(tmp_path))
-    # Clear any model or config env vars
-    for env_var in [
-        "GROK_MODEL",
-        "GROK_API_URL",
-        "GROK_API_KEY",
-        "GUDA_API_KEY",
-        "GUDA_BASE_URL",
-    ]:
-        monkeypatch.delenv(env_var, raising=False)
-
-    # Reset singleton caches/instances
-    Config._instance = None
-    config._config_file = None
-    config._cached_model = None
-    yield
-    Config._instance = None
-    config._config_file = None
-    config._cached_model = None
+pytestmark = pytest.mark.usefixtures("isolated_config")
 
 
 def test_default_model_is_grok_4_3_fast():
@@ -69,7 +46,7 @@ def test_get_config_info_includes_canonical_model_and_deprecation_note(monkeypat
     monkeypatch.setenv("GROK_MODEL", "grok-4.20-beta")
     cfg = Config()
     info = cfg.get_config_info()
-    assert info["GROK_MODEL"] == "grok-4.3-fast"
+    assert info["remote_engine"]["model"] == "grok-4.3-fast"
     assert "grok-4.20-beta" in str(info.get("model_deprecation") or info.get("deprecated_model"))
 
 
@@ -77,7 +54,7 @@ def test_get_config_info_no_deprecation_note_for_standard_model(monkeypatch):
     monkeypatch.setenv("GROK_MODEL", "grok-4-fast")
     cfg = Config()
     info = cfg.get_config_info()
-    assert info["GROK_MODEL"] == "grok-4-fast"
+    assert info["remote_engine"]["model"] == "grok-4-fast"
     assert info.get("model_deprecation") is None and info.get("deprecated_model") is None
 
 
