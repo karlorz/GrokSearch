@@ -167,6 +167,7 @@ claude mcp add-json grok-search --scope user '{
 | `GROK_SEARCH_MCP_HOST` | ❌ | `127.0.0.1` | HTTP 绑定地址；默认 loopback，不会默认 `0.0.0.0` |
 | `GROK_SEARCH_MCP_PORT` | ❌ | `8800` | HTTP 端口（避开 80/8080/6080） |
 | `GROK_SEARCH_MCP_PATH` | ❌ | `/mcp` | HTTP MCP 路径 |
+| `GROK_SEARCH_MCP_PUBLIC_URL` | ❌ | - | 部署方公开给客户端的绝对 MCP URL（例如 `https://search.karldigi.dev/mcp`）；仅用于 `get_config_info` 清晰标识远程引擎，不改变内部路由 |
 | `GROK_SEARCH_MCP_TOKEN` | 静态 HTTP 模式必填 | - | 入站 Bearer（静态模式）。仅 HTTP 使用；缺失且未配置验证网关时 fail-closed。不要复用 `GUDA_API_KEY` / Grok / Tavily / Firecrawl 密钥 |
 | `GROK_SEARCH_MCP_VERIFY_URL` | 网关验证模式可选 | - | 上游密钥验证端点（如 `http://127.0.0.1:8080/internal/keys/verify`）。配置后进入网关验证模式（优先级高于 `GROK_SEARCH_MCP_TOKEN`） |
 | `GROK_SEARCH_MCP_INTERNAL_TOKEN` | 网关验证模式必填 | - | 发往验证端点的内部共享鉴权头 `X-Internal-Token` 值 |
@@ -314,7 +315,7 @@ claude mcp list
 
 ### `get_config_info` — 配置诊断
 
-无需参数。显示所有配置状态、测试 Grok API 连接、返回响应时间和可用模型列表（API Key 自动脱敏）。
+无需参数。部署方设置 `GROK_SEARCH_MCP_PUBLIC_URL` 后，此工具会明确说明当前响应来自远程 Grok Search 引擎，并返回客户端应连接的公开 MCP URL、传输类型、安全的功能状态、连接测试和可用模型。它不会返回 API Key/Token（包括脱敏片段）、内部或 loopback URL、日志路径、上游错误正文和底层异常详情。
 
 ### `switch_model` — 模型切换
 

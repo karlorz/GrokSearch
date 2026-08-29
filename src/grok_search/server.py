@@ -39,6 +39,18 @@ mcp = FastMCP("grok-search")
 _SOURCES_CACHE = SourcesCache(max_size=256)
 _AVAILABLE_MODELS_CACHE: dict[tuple[str, str], list[str]] = {}
 _AVAILABLE_MODELS_LOCK = asyncio.Lock()
+
+
+def _model_ids_from_payload(data: object) -> list[str]:
+    if not isinstance(data, dict):
+        return []
+    return [
+        item["id"]
+        for item in (data.get("data") or [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    ]
+
+
 async def _fetch_available_models(api_url: str, api_key: str) -> list[str]:
     import httpx
 
@@ -54,11 +66,7 @@ async def _fetch_available_models(api_url: str, api_key: str) -> list[str]:
         response.raise_for_status()
         data = response.json()
 
-    models: list[str] = []
-    for item in (data or {}).get("data", []) or []:
-        if isinstance(item, dict) and isinstance(item.get("id"), str):
-            models.append(item["id"])
-    return models
+    return _model_ids_from_payload(data)
 
 
 async def _get_available_models_cached(api_url: str, api_key: str) -> list[str]:
@@ -469,7 +477,8 @@ async def web_map(
 
     **Edge Cases & Best Practices:**
         - Use this tool first when debugging connection or configuration issues.
-        - API keys are automatically masked for security in the response.
+        - Internal URLs, filesystem paths, API keys, and tokens are never returned.
+        - A configured public endpoint identifies the remote MCP engine used by clients.
         - Connection test timeout is 10 seconds; network issues may cause delays.
     """,
     meta={"version": "1.3.0", "author": "guda.studio"},
@@ -480,10 +489,9 @@ async def get_config_info() -> str:
 
     config_info = config.get_config_info()
 
-    # 添加连接测试
     test_result = {
-        "status": "未测试",
-        "message": "",
+        "status": "not_tested",
+        "message": "The remote engine connection has not been tested.",
         "response_time_ms": 0
     }
 
@@ -491,12 +499,10 @@ async def get_config_info() -> str:
         api_url = config.grok_api_url
         api_key = config.grok_api_key
 
-        # 构建 /models 端点 URL
         models_url = f"{api_url.rstrip('/')}/models"
 
-        # 发送测试请求
         import time
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
@@ -507,47 +513,36 @@ async def get_config_info() -> str:
                 }
             )
 
-            response_time = (time.time() - start_time) * 1000  # 转换为毫秒
+            response_time = (time.perf_counter() - start_time) * 1000
+            test_result["response_time_ms"] = round(response_time, 2)
+            test_result["http_status"] = response.status_code
 
             if response.status_code == 200:
-                test_result["status"] = "✅ 连接成功"
-                test_result["message"] = f"成功获取模型列表 (HTTP {response.status_code})"
-                test_result["response_time_ms"] = round(response_time, 2)
+                test_result["status"] = "success"
+                test_result["message"] = "The remote engine connection is healthy."
 
-                # 尝试解析返回的模型列表
                 try:
-                    models_data = response.json()
-                    if "data" in models_data and isinstance(models_data["data"], list):
-                        model_count = len(models_data["data"])
-                        test_result["message"] += f"，共 {model_count} 个模型"
-
-                        # 提取所有模型的 ID/名称
-                        model_names = []
-                        for model in models_data["data"]:
-                            if isinstance(model, dict) and "id" in model:
-                                model_names.append(model["id"])
-
-                        if model_names:
-                            test_result["available_models"] = model_names
-                except:
+                    model_names = _model_ids_from_payload(response.json())
+                    test_result["available_model_count"] = len(model_names)
+                    test_result["available_models"] = model_names
+                except (TypeError, ValueError):
                     pass
             else:
-                test_result["status"] = "⚠️ 连接异常"
-                test_result["message"] = f"HTTP {response.status_code}: {response.text[:100]}"
-                test_result["response_time_ms"] = round(response_time, 2)
+                test_result["status"] = "http_error"
+                test_result["message"] = "The remote engine returned an unsuccessful status."
 
     except httpx.TimeoutException:
-        test_result["status"] = "❌ 连接超时"
-        test_result["message"] = "请求超时（10秒），请检查网络连接或 API URL"
-    except httpx.RequestError as e:
-        test_result["status"] = "❌ 连接失败"
-        test_result["message"] = f"网络错误: {str(e)}"
-    except ValueError as e:
-        test_result["status"] = "❌ 配置错误"
-        test_result["message"] = str(e)
-    except Exception as e:
-        test_result["status"] = "❌ 测试失败"
-        test_result["message"] = f"未知错误: {str(e)}"
+        test_result["status"] = "timeout"
+        test_result["message"] = "The remote engine connection check timed out."
+    except httpx.RequestError:
+        test_result["status"] = "connection_error"
+        test_result["message"] = "The remote engine connection check failed."
+    except ValueError:
+        test_result["status"] = "configuration_error"
+        test_result["message"] = "The remote engine configuration is incomplete."
+    except Exception:
+        test_result["status"] = "unexpected_error"
+        test_result["message"] = "The remote engine connection check failed unexpectedly."
 
     config_info["connection_test"] = test_result
 

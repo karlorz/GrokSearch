@@ -1,6 +1,9 @@
 import os
 import json
+from ipaddress import ip_address
 from pathlib import Path
+from urllib.parse import urlsplit
+
 
 class Config:
     _instance = None
@@ -83,6 +86,59 @@ class Config:
     @property
     def guda_api_key(self) -> str | None:
         return os.getenv("GUDA_API_KEY")
+
+    @property
+    def mcp_public_url(self) -> str | None:
+        """Return the deployment's public MCP endpoint when it is advertised."""
+        public_url = os.getenv("GROK_SEARCH_MCP_PUBLIC_URL", "").strip()
+        if not public_url:
+            return None
+        if any(ord(character) <= 32 or ord(character) == 127 for character in public_url):
+            return None
+        try:
+            parsed_url = urlsplit(public_url)
+            hostname = parsed_url.hostname
+            _ = parsed_url.port
+        except ValueError:
+            return None
+        if (
+            parsed_url.scheme not in {"http", "https"}
+            or not hostname
+            or parsed_url.username is not None
+            or parsed_url.password is not None
+            or parsed_url.query
+            or parsed_url.fragment
+        ):
+            return None
+        normalized_hostname = hostname.lower().rstrip(".")
+        if normalized_hostname == "localhost" or normalized_hostname.endswith(
+            (".localhost", ".local", ".internal")
+        ):
+            return None
+        try:
+            address = ip_address(normalized_hostname)
+        except ValueError:
+            is_ambiguous_ipv4 = all(
+                character in "0123456789." for character in normalized_hostname
+            ) or (
+                normalized_hostname.startswith("0x")
+                and all(
+                    character in "0123456789abcdef"
+                    for character in normalized_hostname[2:]
+                )
+            )
+            if is_ambiguous_ipv4:
+                return None
+        else:
+            if (
+                address.is_private
+                or address.is_loopback
+                or address.is_link_local
+                or address.is_reserved
+                or address.is_unspecified
+            ):
+                return None
+        return public_url
 
     @property
     def grok_api_url(self) -> str:
@@ -209,24 +265,91 @@ class Config:
         self._save_config_file(config_data)
         self._cached_model = self._apply_model_suffix(canonical)
 
-    @staticmethod
-    def _mask_api_key(key: str) -> str:
-        """脱敏显示 API Key，只显示前后各 4 个字符"""
-        if not key or len(key) <= 8:
-            return "***"
-        return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
-
     def get_config_info(self) -> dict:
-        """获取配置信息（API Key 已脱敏）"""
+        """Return a client-safe summary without secrets or internal routing details."""
         try:
-            api_url = self.grok_api_url
-            api_key_raw = self.grok_api_key
-            api_key_masked = self._mask_api_key(api_key_raw)
-            config_status = "✅ 配置完整"
-        except ValueError as e:
-            api_url = "未配置"
-            api_key_masked = "未配置"
-            config_status = f"❌ 配置错误: {str(e)}"
+            self.grok_api_url
+            self.grok_api_key
+            config_status = "complete"
+        except ValueError:
+            config_status = "incomplete"
+
+        from .mcp_transport import (
+            McpHttpConfigError,
+            resolve_run_settings,
+            resolve_transport,
+        )
+
+        public_url = self.mcp_public_url
+        try:
+            run_settings = resolve_run_settings()
+            configured_transport = run_settings.transport
+        except McpHttpConfigError:
+            run_settings = None
+            try:
+                configured_transport = resolve_transport()
+            except McpHttpConfigError:
+                configured_transport = "invalid"
+
+        if public_url and run_settings is not None and run_settings.transport == "http":
+            mcp_connection = {
+                "status": "remote_engine_active",
+                "transport": "streamable_http",
+                "message": (
+                    "This response is from the configured remote Grok Search engine. "
+                    "No local Grok Search, GUDA, Tavily, or Firecrawl service is required."
+                ),
+            }
+        elif public_url and configured_transport == "http":
+            mcp_connection = {
+                "status": "http_configuration_invalid",
+                "transport": "streamable_http",
+                "message": (
+                    "A public MCP endpoint is advertised, but this process has an "
+                    "invalid HTTP transport configuration."
+                ),
+            }
+        elif public_url:
+            mcp_connection = {
+                "status": "public_endpoint_advertised",
+                "transport": configured_transport,
+                "message": (
+                    "A public MCP endpoint is advertised, but this process is not "
+                    "configured for HTTP transport."
+                ),
+            }
+        else:
+            mcp_connection = {
+                "status": "public_endpoint_not_advertised",
+                "transport": (
+                    "streamable_http"
+                    if configured_transport == "http"
+                    else configured_transport
+                ),
+                "message": "This deployment has not advertised a public MCP endpoint.",
+            }
+
+        if run_settings is not None and run_settings.transport == "http":
+            authentication = (
+                "gateway_user_bearer"
+                if run_settings.verify_url
+                else "static_bearer"
+            )
+        elif configured_transport == "stdio":
+            authentication = "not_applicable"
+        else:
+            authentication = "configuration_invalid"
+
+        mcp_connection.update(
+            {
+                "public_endpoint": public_url,
+                "client_configuration": {
+                    "endpoint_env": "GROK_SEARCH_MCP_URL",
+                    "bearer_token_env": "GROK_SEARCH_MCP_TOKEN",
+                    "authentication": authentication,
+                },
+            }
+        )
 
         raw_env_model = os.getenv("GROK_MODEL")
         deprecation_note = None
@@ -234,20 +357,12 @@ class Config:
             deprecation_note = f"'{raw_env_model}' 已废弃，已自动规范化为 '{self.canonicalize_model(raw_env_model)}'"
 
         info = {
-            "GUDA_BASE_URL": self.guda_base_url,
-            "GUDA_API_KEY": self._mask_api_key(self.guda_api_key) if self.guda_api_key else "未配置",
-            "GROK_API_URL": api_url,
-            "GROK_API_KEY": api_key_masked,
-            "GROK_MODEL": self.grok_model,
-            "GROK_DEBUG": self.debug_enabled,
-            "GROK_LOG_LEVEL": self.log_level,
-            "GROK_LOG_DIR": str(self.log_dir),
-            "TAVILY_API_URL": self.tavily_api_url,
-            "TAVILY_ENABLED": self.tavily_enabled,
-            "TAVILY_API_KEY": self._mask_api_key(self.tavily_api_key) if self.tavily_api_key else "未配置",
-            "FIRECRAWL_API_URL": self.firecrawl_api_url,
-            "FIRECRAWL_ENABLED": self.firecrawl_enabled,
-            "FIRECRAWL_API_KEY": self._mask_api_key(self.firecrawl_api_key) if self.firecrawl_api_key else "未配置",
+            "mcp_connection": mcp_connection,
+            "remote_engine": {
+                "model": self.grok_model,
+                "tavily_enabled": self.tavily_enabled,
+                "firecrawl_enabled": self.firecrawl_enabled,
+            },
             "config_status": config_status,
         }
         if deprecation_note:

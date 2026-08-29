@@ -144,6 +144,7 @@ You can also configure additional environment variables in the `env` field:
 | `GROK_SEARCH_MCP_HOST` | No | `127.0.0.1` | HTTP bind address; loopback default, never `0.0.0.0` unless you set it |
 | `GROK_SEARCH_MCP_PORT` | No | `8800` | HTTP port (not 80/8080/6080) |
 | `GROK_SEARCH_MCP_PATH` | No | `/mcp` | HTTP MCP path |
+| `GROK_SEARCH_MCP_PUBLIC_URL` | No | - | Absolute MCP URL advertised to clients by the deployment (for example, `https://search.karldigi.dev/mcp`). Used only to identify the remote engine in `get_config_info`; it does not change internal routing |
 | `GROK_SEARCH_MCP_TOKEN` | Required for static HTTP | - | Inbound Bearer (static mode). HTTP only; missing token fail-closes if verify mode is not configured. Do not reuse `GUDA_API_KEY` / Grok / Tavily / Firecrawl keys |
 | `GROK_SEARCH_MCP_VERIFY_URL` | Optional for gateway verify | - | Upstream key verification endpoint (e.g. `http://127.0.0.1:8080/internal/keys/verify`). Enables gateway verification mode (takes precedence over `GROK_SEARCH_MCP_TOKEN`) |
 | `GROK_SEARCH_MCP_INTERNAL_TOKEN` | Required for gateway verify | - | Shared secret sent in the `X-Internal-Token` header to the verification endpoint |
@@ -293,7 +294,7 @@ Traverses website structure via Tavily Map API, discovering URLs and generating 
 
 ### `get_config_info` — Configuration Diagnostics
 
-No parameters required. Displays all configuration status, tests Grok API connection, returns response time and available model list (API keys auto-masked).
+No parameters required. When the deployment sets `GROK_SEARCH_MCP_PUBLIC_URL`, this tool clearly identifies the response as coming from the remote Grok Search engine and returns the public MCP endpoint, transport, safe capability state, connection test, and available models. It never returns API keys or tokens (including masked fragments), internal or loopback URLs, log paths, upstream error bodies, or low-level exception details.
 
 ### `switch_model` — Model Switching
 
