@@ -196,3 +196,53 @@ async def test_malformed_events_do_not_discard_valid_content_or_sources() -> Non
     assert [source.to_dict() for source in result.sources] == [
         {"url": "https://example.test/valid", "provider": "grok"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_reasoning_content_becomes_answer_when_delta_content_empty() -> None:
+    response = _StreamingResponse(
+        [
+            _sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": "",
+                                "reasoning_content": "Latest convex is 1.45.0",
+                            }
+                        }
+                    ]
+                }
+            ),
+            "data: [DONE]",
+        ]
+    )
+
+    result = await _provider()._parse_streaming_response(response)
+
+    assert result.content == "Latest convex is 1.45.0"
+
+
+@pytest.mark.asyncio
+async def test_delta_content_wins_over_reasoning_content() -> None:
+    response = _StreamingResponse(
+        [
+            _sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": "Visible answer",
+                                "reasoning_content": "Hidden reasoning",
+                            }
+                        }
+                    ]
+                }
+            ),
+            "data: [DONE]",
+        ]
+    )
+
+    result = await _provider()._parse_streaming_response(response)
+
+    assert result.content == "Visible answer"

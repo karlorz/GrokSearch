@@ -12,7 +12,11 @@ from pydantic import Field
 
 # 尝试使用绝对导入（支持 mcp run）
 try:
-    from grok_search.providers.contracts import SearchOutput
+    from grok_search.providers.contracts import (
+        SearchOutput,
+        envelope_from_grok_result,
+        envelope_kind,
+    )
     from grok_search.providers.grok import GrokSearchProvider
     from grok_search.logger import log_info, logger
     from grok_search.config import config
@@ -22,7 +26,11 @@ try:
     from grok_search.sources import SourcesCache, merge_sources, new_session_id, split_answer_and_sources
     from grok_search.planning import engine as planning_engine, _split_csv
 except ImportError:
-    from .providers.contracts import SearchOutput
+    from .providers.contracts import (
+        SearchOutput,
+        envelope_from_grok_result,
+        envelope_kind,
+    )
     from .providers.grok import GrokSearchProvider
     from .logger import log_info, logger
     from .config import config
@@ -177,9 +185,9 @@ async def web_search(
     # 并行执行搜索任务
     async def _safe_grok() -> SearchOutput:
         try:
-            return await grok_provider.search(query, platform)
-        except Exception:
-            return SearchOutput()
+            return envelope_from_grok_result(await grok_provider.search(query, platform))
+        except Exception as exc:
+            return envelope_from_grok_result(error=exc)
 
     async def _safe_tavily() -> list[dict] | None:
         try:
@@ -203,7 +211,7 @@ async def web_search(
 
     gathered = await asyncio.gather(*coros)
 
-    grok_result: SearchOutput = gathered[0] or SearchOutput()
+    grok_result: SearchOutput = gathered[0]
     tavily_results: list[dict] | None = None
     firecrawl_results: list[dict] | None = None
     idx = 1
@@ -213,11 +221,21 @@ async def web_search(
     if firecrawl_count > 0:
         firecrawl_results = gathered[idx]
 
-    answer, fallback_sources = split_answer_and_sources(grok_result.content)
+    kind = envelope_kind(grok_result.content)
+    if kind != "ok":
+        answer, fallback_sources = grok_result.content, []
+    else:
+        answer, fallback_sources = split_answer_and_sources(grok_result.content)
     extra = _extra_results_to_sources(tavily_results, firecrawl_results)
     all_sources = merge_sources(grok_result.sources, fallback_sources, extra)
 
     await _SOURCES_CACHE.set(session_id, all_sources)
+    print(
+        f"web_search envelope session={session_id} kind={kind} "
+        f"content_len={len(answer)} sources={len(all_sources)}",
+        file=sys.stderr,
+        flush=True,
+    )
     return {"session_id": session_id, "content": answer, "sources_count": len(all_sources)}
 
 

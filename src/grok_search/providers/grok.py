@@ -180,11 +180,12 @@ class GrokSearchProvider(BaseSearchProvider):
         return NormalizedSource.from_mapping(payload, provider="grok")
 
     @classmethod
-    def _parts_from_event(cls, data: Any) -> tuple[str, list[NormalizedSource]]:
+    def _parts_from_event(cls, data: Any) -> tuple[str, str, list[NormalizedSource]]:
         if not isinstance(data, dict):
-            return "", []
+            return "", "", []
 
         content = ""
+        reasoning = ""
         sources: list[NormalizedSource] = []
         choices = data.get("choices")
         if isinstance(choices, list) and choices and isinstance(choices[0], dict):
@@ -198,6 +199,9 @@ class GrokSearchProvider(BaseSearchProvider):
                 value = container.get("content")
                 if isinstance(value, str):
                     content += value
+                reason_value = container.get("reasoning_content")
+                if isinstance(reason_value, str):
+                    reasoning += reason_value
                 annotations = container.get("annotations")
                 if isinstance(annotations, list):
                     for annotation in annotations:
@@ -212,17 +216,20 @@ class GrokSearchProvider(BaseSearchProvider):
                 if source is not None:
                     sources.append(source)
 
-        return content, sources
+        return content, reasoning, sources
 
     async def _parse_streaming_response(self, response, ctx=None) -> SearchOutput:
         content_parts: list[str] = []
+        reasoning_parts: list[str] = []
         source_candidates: list[NormalizedSource] = []
         plain_body_buffer: list[str] = []
 
         def _consume_event(data: Any) -> None:
-            event_content, event_sources = self._parts_from_event(data)
+            event_content, event_reasoning, event_sources = self._parts_from_event(data)
             if event_content:
                 content_parts.append(event_content)
+            if event_reasoning:
+                reasoning_parts.append(event_reasoning)
             source_candidates.extend(event_sources)
 
         async for line in response.aiter_lines():
@@ -253,6 +260,8 @@ class GrokSearchProvider(BaseSearchProvider):
                 pass
 
         content = "".join(content_parts)
+        if not content.strip():
+            content = "".join(reasoning_parts)
         await log_info(ctx, f"content: {content}", config.debug_enabled)
 
         return SearchOutput(

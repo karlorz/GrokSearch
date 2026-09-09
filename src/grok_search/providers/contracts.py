@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import re
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit
 
@@ -101,3 +102,39 @@ class SearchOutput:
 
     content: str = ""
     sources: tuple[NormalizedSource, ...] = ()
+
+
+UPSTREAM_ERROR_PREFIX = "upstream_error:"
+UPSTREAM_EMPTY_PREFIX = "upstream_empty:"
+_URL_IN_TEXT = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
+def envelope_kind(content: str) -> str:
+    if content.startswith(UPSTREAM_ERROR_PREFIX):
+        return "upstream_error"
+    if content.startswith(UPSTREAM_EMPTY_PREFIX):
+        return "upstream_empty"
+    return "ok"
+
+
+def is_failure_envelope(content: str) -> bool:
+    return envelope_kind(content) != "ok"
+
+
+def envelope_from_grok_result(
+    result: SearchOutput | None = None,
+    error: BaseException | None = None,
+) -> SearchOutput:
+    """Turn a Grok provider result or exception into a non-blank MCP content envelope."""
+    if error is not None:
+        detail = f"{type(error).__name__}: {error}"
+        detail = _URL_IN_TEXT.sub("[url]", " ".join(detail.split()))[:240]
+        return SearchOutput(content=f"{UPSTREAM_ERROR_PREFIX} {detail}")
+    result = result or SearchOutput()
+    if (result.content or "").strip():
+        return result
+    if result.sources:
+        return result
+    return SearchOutput(
+        content=f"{UPSTREAM_EMPTY_PREFIX} grok stream completed with no answer content"
+    )
