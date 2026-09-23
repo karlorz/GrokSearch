@@ -331,6 +331,8 @@ def test_http_mcp_app_with_gateway_token_verifier():
             # 1. Missing bearer -> 401
             missing = client.post("/mcp", json=INITIALIZE_BODY, headers=MCP_HEADERS)
             assert missing.status_code == 401
+            assert missing.headers.get("www-authenticate") == "Bearer"
+            assert "resource_metadata" not in (missing.headers.get("www-authenticate") or "")
 
             # 2. Invalid bearer -> 401
             invalid = client.post(
@@ -339,6 +341,9 @@ def test_http_mcp_app_with_gateway_token_verifier():
                 headers={**MCP_HEADERS, "Authorization": "Bearer gsk_bad_live_token"},
             )
             assert invalid.status_code == 401
+            invalid_auth = invalid.headers.get("www-authenticate") or ""
+            assert 'error="invalid_token"' in invalid_auth
+            assert "resource_metadata" not in invalid_auth
 
             # 3. Valid bearer -> 200 initialize + 200 tools/list
             valid_headers = {
@@ -360,6 +365,67 @@ def test_http_mcp_app_with_gateway_token_verifier():
             names = {t["name"] for t in tools_payload["result"]["tools"]}
             assert "web_search" in names
             assert "get_sources" in names
+    finally:
+        mcp.auth = previous
+
+
+def test_http_mcp_app_gateway_mode_with_oauth_issuer_advertises_resource_metadata():
+    def gateway_handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("X-Internal-Token") != "internal-secret":
+            return httpx.Response(403, json={"error": "forbidden"})
+        payload = json.loads(request.read())
+        token = payload.get("token")
+        if token == "gsk_valid_live_token":
+            return httpx.Response(
+                200,
+                json={
+                    "client_id": "live-client",
+                    "scopes": ["mcp"],
+                    "name": "live-key",
+                },
+            )
+        return httpx.Response(401, json={"error": "invalid_key"})
+
+    issuer = "https://search.karldigi.dev"
+    expected_resource_metadata = (
+        'resource_metadata="https://search.karldigi.dev/.well-known/oauth-protected-resource/mcp"'
+    )
+
+    transport = httpx.MockTransport(gateway_handler)
+    verifier = build_gateway_token_verifier(
+        verify_url="http://127.0.0.1:8080/internal/keys/verify",
+        internal_token="internal-secret",
+        transport=transport,
+        resource_base_url=issuer,
+    )
+
+    previous = getattr(mcp, "auth", None)
+    apply_http_auth(mcp, verifier)
+    app = mcp.http_app(path="/mcp", transport="http")
+
+    try:
+        with TestClient(app) as client:
+            missing = client.post("/mcp", json=INITIALIZE_BODY, headers=MCP_HEADERS)
+            assert missing.status_code == 401
+            missing_auth = missing.headers.get("www-authenticate") or ""
+            assert expected_resource_metadata in missing_auth
+
+            invalid = client.post(
+                "/mcp",
+                json=INITIALIZE_BODY,
+                headers={**MCP_HEADERS, "Authorization": "Bearer gsk_bad_live_token"},
+            )
+            assert invalid.status_code == 401
+            invalid_auth = invalid.headers.get("www-authenticate") or ""
+            assert 'error="invalid_token"' in invalid_auth
+            assert expected_resource_metadata in invalid_auth
+
+            valid_headers = {
+                **MCP_HEADERS,
+                "Authorization": "Bearer gsk_valid_live_token",
+            }
+            init = client.post("/mcp", json=INITIALIZE_BODY, headers=valid_headers)
+            assert init.status_code == 200, init.text
     finally:
         mcp.auth = previous
 

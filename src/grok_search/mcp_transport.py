@@ -10,7 +10,9 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+import urllib.parse
 from dataclasses import dataclass
+from ipaddress import ip_address
 from typing import Any, Literal, Mapping
 
 import httpx
@@ -42,6 +44,7 @@ _ENV_PATH = "GROK_SEARCH_MCP_PATH"
 _ENV_TOKEN = "GROK_SEARCH_MCP_TOKEN"
 _ENV_VERIFY_URL = "GROK_SEARCH_MCP_VERIFY_URL"
 _ENV_INTERNAL_TOKEN = "GROK_SEARCH_MCP_INTERNAL_TOKEN"
+_ENV_OAUTH_ISSUER = "GROK_SEARCH_MCP_OAUTH_ISSUER"
 
 class McpHttpConfigError(ValueError):
     """Raised when HTTP MCP is requested with an invalid or missing setup."""
@@ -65,8 +68,12 @@ class GatewayTokenVerifier(TokenVerifier):
         timeout: float = 3.0,
         negative_cache_ttl: float = 60.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        resource_base_url: str | None = None,
     ):
-        super().__init__(required_scopes=required_scopes)
+        super().__init__(
+            required_scopes=required_scopes,
+            resource_base_url=resource_base_url,
+        )
         self.verify_url = verify_url
         self.internal_token = internal_token
         self.timeout = timeout
@@ -146,6 +153,64 @@ def _env(environ: Mapping[str, str] | None, name: str, default: str | None = Non
     return stripped if stripped else default
 
 
+def resolve_oauth_issuer(environ: Mapping[str, str] | None = None) -> str | None:
+    raw = _env(environ, _ENV_OAUTH_ISSUER, None)
+    if not raw:
+        return None
+
+    try:
+        parsed = urllib.parse.urlsplit(raw)
+    except Exception as exc:
+        raise McpHttpConfigError(f"Invalid {_ENV_OAUTH_ISSUER}: {raw!r}") from exc
+
+    if parsed.scheme not in ("https", "http"):
+        raise McpHttpConfigError(
+            f"{_ENV_OAUTH_ISSUER} scheme must be https or http, got {parsed.scheme!r}"
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        if parsed.netloc == "::1":
+            hostname = "::1"
+        else:
+            raise McpHttpConfigError(
+                f"{_ENV_OAUTH_ISSUER} must include a host: {raw!r}"
+            )
+
+    if parsed.username or parsed.password:
+        raise McpHttpConfigError(
+            f"{_ENV_OAUTH_ISSUER} must not contain userinfo: {raw!r}"
+        )
+    if parsed.path not in ("",):
+        raise McpHttpConfigError(
+            f"{_ENV_OAUTH_ISSUER} must not contain a path, got {parsed.path!r}"
+        )
+    if parsed.query:
+        raise McpHttpConfigError(
+            f"{_ENV_OAUTH_ISSUER} must not contain query parameters: {raw!r}"
+        )
+    if parsed.fragment:
+        raise McpHttpConfigError(
+            f"{_ENV_OAUTH_ISSUER} must not contain a fragment: {raw!r}"
+        )
+
+    is_loopback = False
+    if hostname in ("localhost", "127.0.0.1", "::1"):
+        is_loopback = True
+    else:
+        try:
+            is_loopback = ip_address(hostname).is_loopback
+        except ValueError:
+            is_loopback = False
+
+    if parsed.scheme == "http" and not is_loopback:
+        raise McpHttpConfigError(
+            f"{_ENV_OAUTH_ISSUER} http scheme is only allowed for loopback addresses: {raw!r}"
+        )
+
+    return raw
+
+
 def resolve_transport(environ: Mapping[str, str] | None = None) -> Transport:
     raw = _env(environ, _ENV_TRANSPORT, DEFAULT_TRANSPORT)
     value = (raw or DEFAULT_TRANSPORT).lower()
@@ -186,8 +251,11 @@ def require_http_token(environ: Mapping[str, str] | None = None) -> str:
     return token
 
 
-def build_static_token_verifier(token: str) -> StaticTokenVerifier:
-    return StaticTokenVerifier(
+def build_static_token_verifier(
+    token: str,
+    resource_base_url: str | None = None,
+) -> StaticTokenVerifier:
+    verifier = StaticTokenVerifier(
         tokens={
             token: {
                 "client_id": "grok-search-http",
@@ -195,6 +263,9 @@ def build_static_token_verifier(token: str) -> StaticTokenVerifier:
             }
         }
     )
+    if resource_base_url is not None:
+        verifier.resource_base_url = resource_base_url
+    return verifier
 
 
 def build_gateway_token_verifier(
@@ -202,23 +273,31 @@ def build_gateway_token_verifier(
     internal_token: str,
     required_scopes: list[str] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
+    resource_base_url: str | None = None,
 ) -> GatewayTokenVerifier:
     return GatewayTokenVerifier(
         verify_url=verify_url,
         internal_token=internal_token,
         required_scopes=required_scopes,
         transport=transport,
+        resource_base_url=resource_base_url,
     )
 
 
 def apply_http_auth(
     mcp,
     auth_or_token: str | TokenVerifier,
+    resource_base_url: str | None = None,
 ) -> TokenVerifier:
     if isinstance(auth_or_token, TokenVerifier):
         verifier = auth_or_token
+        if resource_base_url is not None:
+            verifier.resource_base_url = resource_base_url
     else:
-        verifier = build_static_token_verifier(auth_or_token)
+        verifier = build_static_token_verifier(
+            auth_or_token,
+            resource_base_url=resource_base_url,
+        )
     mcp.auth = verifier
     return verifier
 
@@ -234,6 +313,7 @@ class McpRunSettings:
     internal_token: str | None = None
     allowed_hosts: tuple[str, ...] | None = None
     uvicorn_config: dict[str, Any] | None = None
+    issuer: str | None = None
 
 
 def resolve_run_settings(environ: Mapping[str, str] | None = None) -> McpRunSettings:
@@ -242,6 +322,7 @@ def resolve_run_settings(environ: Mapping[str, str] | None = None) -> McpRunSett
         return McpRunSettings(transport="stdio")
 
     bind = resolve_http_bind(environ)
+    issuer = resolve_oauth_issuer(environ)
     verify_url = _env(environ, _ENV_VERIFY_URL, None)
     if verify_url:
         internal_token = _env(environ, _ENV_INTERNAL_TOKEN, None)
@@ -259,6 +340,7 @@ def resolve_run_settings(environ: Mapping[str, str] | None = None) -> McpRunSett
             internal_token=internal_token,
             allowed_hosts=DEFAULT_ALLOWED_HOSTS,
             uvicorn_config=DEFAULT_UVICORN_CONFIG,
+            issuer=issuer,
         )
 
     token = require_http_token(environ)
@@ -272,6 +354,7 @@ def resolve_run_settings(environ: Mapping[str, str] | None = None) -> McpRunSett
         internal_token=None,
         allowed_hosts=DEFAULT_ALLOWED_HOSTS,
         uvicorn_config=DEFAULT_UVICORN_CONFIG,
+        issuer=issuer,
     )
 
 
@@ -291,11 +374,12 @@ def run_mcp(mcp, settings: McpRunSettings | None = None, environ: Mapping[str, s
         verifier = build_gateway_token_verifier(
             verify_url=resolved.verify_url,
             internal_token=resolved.internal_token,
+            resource_base_url=resolved.issuer,
         )
         apply_http_auth(mcp, verifier)
     else:
         assert resolved.token is not None
-        apply_http_auth(mcp, resolved.token)
+        apply_http_auth(mcp, resolved.token, resource_base_url=resolved.issuer)
 
     allowed_hosts = list(resolved.allowed_hosts or DEFAULT_ALLOWED_HOSTS)
     uvicorn_config = dict(resolved.uvicorn_config or DEFAULT_UVICORN_CONFIG)

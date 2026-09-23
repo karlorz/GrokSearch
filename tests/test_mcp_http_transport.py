@@ -129,9 +129,9 @@ def test_cursor_plugin_is_local_type_http_example():
     assert "marketplace" not in dumped.lower()
 
 
-def _mcp_app(token: str):
+def _mcp_app(token: str, issuer: str | None = None):
     previous = getattr(mcp, "auth", None)
-    apply_http_auth(mcp, token)
+    apply_http_auth(mcp, token, resource_base_url=issuer)
     app = mcp.http_app(path="/mcp", transport="http")
     return app, previous
 
@@ -208,11 +208,131 @@ def test_http_initialize_without_bearer_is_401():
         with TestClient(app) as client:
             missing = client.post("/mcp", json=INITIALIZE_BODY, headers=MCP_HEADERS)
             assert missing.status_code == 401
+            assert missing.headers.get("www-authenticate") == "Bearer"
+            assert "resource_metadata" not in (missing.headers.get("www-authenticate") or "")
+
             wrong = client.post(
                 "/mcp",
                 json=INITIALIZE_BODY,
                 headers={**MCP_HEADERS, "Authorization": "Bearer wrong-token"},
             )
             assert wrong.status_code == 401
+            wrong_auth = wrong.headers.get("www-authenticate") or ""
+            assert 'error="invalid_token"' in wrong_auth
+            assert "resource_metadata" not in wrong_auth
     finally:
         mcp.auth = previous
+
+
+def test_http_initialize_with_oauth_issuer_401_advertises_resource_metadata():
+    token = "unit-http-mcp-token"
+    issuer = "https://search.karldigi.dev"
+    app, previous = _mcp_app(token, issuer=issuer)
+    expected_resource_metadata = (
+        'resource_metadata="https://search.karldigi.dev/.well-known/oauth-protected-resource/mcp"'
+    )
+    try:
+        with TestClient(app) as client:
+            missing = client.post("/mcp", json=INITIALIZE_BODY, headers=MCP_HEADERS)
+            assert missing.status_code == 401
+            missing_auth = missing.headers.get("www-authenticate") or ""
+            assert expected_resource_metadata in missing_auth
+
+            wrong = client.post(
+                "/mcp",
+                json=INITIALIZE_BODY,
+                headers={**MCP_HEADERS, "Authorization": "Bearer wrong-token"},
+            )
+            assert wrong.status_code == 401
+            wrong_auth = wrong.headers.get("www-authenticate") or ""
+            assert 'error="invalid_token"' in wrong_auth
+            assert expected_resource_metadata in wrong_auth
+
+            # Valid bearer still initializes (200) with issuer set
+            valid = client.post(
+                "/mcp",
+                json=INITIALIZE_BODY,
+                headers={**MCP_HEADERS, "Authorization": f"Bearer {token}"},
+            )
+            assert valid.status_code == 200, valid.text
+    finally:
+        mcp.auth = previous
+
+
+def test_resolve_run_settings_oauth_issuer_validation():
+    # Valid issuers
+    s_https = resolve_run_settings(
+        {
+            "GROK_SEARCH_MCP_TRANSPORT": "http",
+            "GROK_SEARCH_MCP_TOKEN": "loopback-token",
+            "GROK_SEARCH_MCP_OAUTH_ISSUER": "https://search.karldigi.dev",
+        }
+    )
+    assert s_https.issuer == "https://search.karldigi.dev"
+
+    s_loopback_ip = resolve_run_settings(
+        {
+            "GROK_SEARCH_MCP_TRANSPORT": "http",
+            "GROK_SEARCH_MCP_TOKEN": "loopback-token",
+            "GROK_SEARCH_MCP_OAUTH_ISSUER": "http://127.0.0.1",
+        }
+    )
+    assert s_loopback_ip.issuer == "http://127.0.0.1"
+
+    s_loopback_host = resolve_run_settings(
+        {
+            "GROK_SEARCH_MCP_TRANSPORT": "http",
+            "GROK_SEARCH_MCP_TOKEN": "loopback-token",
+            "GROK_SEARCH_MCP_OAUTH_ISSUER": "http://localhost",
+        }
+    )
+    assert s_loopback_host.issuer == "http://localhost"
+
+    s_loopback_v6 = resolve_run_settings(
+        {
+            "GROK_SEARCH_MCP_TRANSPORT": "http",
+            "GROK_SEARCH_MCP_TOKEN": "loopback-token",
+            "GROK_SEARCH_MCP_OAUTH_ISSUER": "http://[::1]",
+        }
+    )
+    assert s_loopback_v6.issuer == "http://[::1]"
+
+    # Pathful issuer rejected
+    with pytest.raises(McpHttpConfigError, match="path"):
+        resolve_run_settings(
+            {
+                "GROK_SEARCH_MCP_TRANSPORT": "http",
+                "GROK_SEARCH_MCP_TOKEN": "loopback-token",
+                "GROK_SEARCH_MCP_OAUTH_ISSUER": "https://search.karldigi.dev/mcp",
+            }
+        )
+
+    with pytest.raises(McpHttpConfigError, match="path"):
+        resolve_run_settings(
+            {
+                "GROK_SEARCH_MCP_TRANSPORT": "http",
+                "GROK_SEARCH_MCP_TOKEN": "loopback-token",
+                "GROK_SEARCH_MCP_OAUTH_ISSUER": "https://search.karldigi.dev/",
+            }
+        )
+
+    # http non-loopback rejected
+    with pytest.raises(McpHttpConfigError, match="loopback"):
+        resolve_run_settings(
+            {
+                "GROK_SEARCH_MCP_TRANSPORT": "http",
+                "GROK_SEARCH_MCP_TOKEN": "loopback-token",
+                "GROK_SEARCH_MCP_OAUTH_ISSUER": "http://example.com",
+            }
+        )
+
+
+def test_stdio_ignores_oauth_issuer():
+    settings = resolve_run_settings(
+        {
+            "GROK_SEARCH_MCP_TRANSPORT": "stdio",
+            "GROK_SEARCH_MCP_OAUTH_ISSUER": "https://search.karldigi.dev",
+        }
+    )
+    assert settings.transport == "stdio"
+    assert settings.issuer is None

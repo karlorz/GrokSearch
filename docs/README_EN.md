@@ -148,6 +148,7 @@ You can also configure additional environment variables in the `env` field:
 | `GROK_SEARCH_MCP_TOKEN` | Required for static HTTP | - | Inbound Bearer (static mode). HTTP only; missing token fail-closes if verify mode is not configured. Do not reuse `GUDA_API_KEY` / Grok / Tavily / Firecrawl keys |
 | `GROK_SEARCH_MCP_VERIFY_URL` | Optional for gateway verify | - | Upstream key verification endpoint (e.g. `http://127.0.0.1:8080/internal/keys/verify`). Enables gateway verification mode (takes precedence over `GROK_SEARCH_MCP_TOKEN`) |
 | `GROK_SEARCH_MCP_INTERNAL_TOKEN` | Required for gateway verify | - | Shared secret sent in the `X-Internal-Token` header to the verification endpoint |
+| `GROK_SEARCH_MCP_OAUTH_ISSUER` | No | - | Optional public origin; when set, 401 advertises RFC 9728 protected-resource metadata; does not enable an authorization server in this process |
 
 > **Note**: When `GUDA_API_KEY` is set, all `GROK_API_URL`/`GROK_API_KEY`/`TAVILY_*`/`FIRECRAWL_*` variables become optional as they are auto-derived from `GUDA_BASE_URL`. Explicitly set variables take higher priority.
 

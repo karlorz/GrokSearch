@@ -171,6 +171,7 @@ claude mcp add-json grok-search --scope user '{
 | `GROK_SEARCH_MCP_TOKEN` | 静态 HTTP 模式必填 | - | 入站 Bearer（静态模式）。仅 HTTP 使用；缺失且未配置验证网关时 fail-closed。不要复用 `GUDA_API_KEY` / Grok / Tavily / Firecrawl 密钥 |
 | `GROK_SEARCH_MCP_VERIFY_URL` | 网关验证模式可选 | - | 上游密钥验证端点（如 `http://127.0.0.1:8080/internal/keys/verify`）。配置后进入网关验证模式（优先级高于 `GROK_SEARCH_MCP_TOKEN`） |
 | `GROK_SEARCH_MCP_INTERNAL_TOKEN` | 网关验证模式必填 | - | 发往验证端点的内部共享鉴权头 `X-Internal-Token` 值 |
+| `GROK_SEARCH_MCP_OAUTH_ISSUER` | ❌ | - | 可选公开源（Origin）；配置后 401 响应广播 RFC 9728 受保护资源元数据（Protected Resource Metadata），本进程不开启授权服务器 |
 
 > **注意**：配置了 `GUDA_API_KEY` 后，`GROK_API_URL`/`GROK_API_KEY`/`TAVILY_*`/`FIRECRAWL_*` 均为可选，系统自动从 `GUDA_BASE_URL` 派生。显式设置的独立变量优先级更高。
 
