@@ -13,6 +13,7 @@ import html
 import os
 import secrets
 import time
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -82,6 +83,8 @@ class AuthRun:
     gateway_code: str | None = None
     gateway_code_expires_at: float | None = None
     error_message: str | None = None
+    agent_id: str | None = None
+    invite_code: str | None = None
 
     def is_expired(self, now: float | None = None) -> bool:
         current = now if now is not None else time.time()
@@ -167,6 +170,8 @@ class AuthRunStore:
         self,
         ttl_seconds: int = 600,
         client_name: str = "GrokSearch CLI",
+        agent_id: str | None = None,
+        invite_code: str | None = None,
     ) -> tuple[AuthRun, str]:
         self.prune_expired()
         if len(self._runs_by_id) >= self._max_runs:
@@ -190,6 +195,8 @@ class AuthRunStore:
             expires_at=expires_at,
             client_name=client_name,
             state=AuthRunState.PENDING,
+            agent_id=agent_id,
+            invite_code=invite_code,
         )
 
         self._runs_by_id[run_id] = run
@@ -261,6 +268,8 @@ class CliAuthCoordinator:
             )
 
         client_name = "GrokSearch CLI"
+        agent_id: str | None = None
+        invite_code: str | None = None
         # Bounded body reading if present
         try:
             body = await request.body()
@@ -270,10 +279,19 @@ class CliAuthCoordinator:
                 )
             if body:
                 data = await request.json()
-                if isinstance(data, dict) and "client_name" in data:
-                    cname = str(data["client_name"]).strip()
-                    if cname and len(cname) <= 64:
-                        client_name = cname
+                if isinstance(data, dict):
+                    if "client_name" in data:
+                        cname = str(data["client_name"]).strip()
+                        if cname and len(cname) <= 64:
+                            client_name = cname
+                    if "agent_id" in data:
+                        aid = str(data["agent_id"]).strip()
+                        if aid and len(aid) <= 128:
+                            agent_id = aid
+                    if "invite_code" in data:
+                        icode = str(data["invite_code"]).strip()
+                        if icode and len(icode) <= 128:
+                            invite_code = icode
         except Exception:
             pass
 
@@ -289,13 +307,19 @@ class CliAuthCoordinator:
             run, poll_secret = self.store.create_run(
                 ttl_seconds=self.config.run_ttl_seconds,
                 client_name=client_name,
+                agent_id=agent_id,
+                invite_code=invite_code,
             )
         except RuntimeError:
             return self._apply_security_headers(
                 JSONResponse({"error": "server_busy", "message": "Coordinator capacity reached"}, status_code=503)
             )
 
-        approve_url = f"{self.config.origin}/auth/cli/approve?ref={run.approval_ref}"
+        approve_query = [("ref", run.approval_ref)]
+        if run.invite_code:
+            approve_query.append(("invite", run.invite_code))
+        encoded_query = urllib.parse.urlencode(approve_query)
+        approve_url = f"{self.config.origin}/auth/cli/approve?{encoded_query}"
         expires_at_iso = datetime.fromtimestamp(run.expires_at, tz=timezone.utc).isoformat()
 
         response_data = {
@@ -430,7 +454,7 @@ class CliAuthCoordinator:
         run.state = AuthRunState.AWAITING_GATEWAY
 
         # Build redirect to gateway /authorize
-        params = {
+        params: dict[str, str] = {
             "response_type": "code",
             "client_id": self.config.oauth_client_id,
             "redirect_uri": self.config.oauth_redirect_uri,
@@ -439,6 +463,10 @@ class CliAuthCoordinator:
             "code_challenge_method": "S256",
             "scope": "mcp",
         }
+        if run.invite_code:
+            params["invite"] = run.invite_code
+        if run.agent_id:
+            params["agent_label"] = run.agent_id
         redirect_url = httpx.URL(self.config.gateway_authorize_url, params=params)
 
         response = RedirectResponse(str(redirect_url), status_code=302)

@@ -417,6 +417,58 @@ def test_composed_app_mcp_initialize_and_tools_with_bearer():
         assert "get_sources" in tool_names
 
 
+def test_start_with_agent_id_and_invite_code():
+    app, coordinator, store = _setup_test_app()
+    with TestClient(app) as client:
+        resp = client.post(
+            "/auth/cli/start",
+            json={
+                "client_name": "GrokSearch CLI",
+                "agent_id": "muse",
+                "invite_code": "secret-invite-123",
+            },
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+
+        approve_url = data["approveUrl"]
+        poll_secret = data["pollSecret"]
+        run_id = data["authRunId"]
+
+        # approveUrl contains invite= and ref=, but NOT pollSecret
+        assert poll_secret not in approve_url
+        assert "ref=" in approve_url
+        assert "invite=secret-invite-123" in approve_url
+
+        parsed_url = urllib.parse.urlparse(approve_url)
+        q = urllib.parse.parse_qs(parsed_url.query)
+        assert "ref" in q
+        assert q["invite"] == ["secret-invite-123"]
+        assert "pollSecret" not in q
+
+        # Verify run attributes in store
+        run = store.get_by_id(run_id)
+        assert run is not None
+        assert run.agent_id == "muse"
+        assert run.invite_code == "secret-invite-123"
+
+        # Verify approve post passes invite and agent_label to gateway authorize
+        ref = q["ref"][0]
+        get_res = client.get(f"/auth/cli/approve?ref={ref}")
+        csrf_token = _extract_csrf(get_res.text)
+
+        post_res = client.post(
+            "/auth/cli/approve",
+            data={"ref": ref, "csrf_token": csrf_token, "action": "approve"},
+            follow_redirects=False,
+        )
+        assert post_res.status_code == 302
+        location = post_res.headers["location"]
+        auth_q = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)
+        assert auth_q["agent_label"] == ["muse"]
+        assert auth_q["invite"] == ["secret-invite-123"]
+
+
 def test_cli_routes_not_blocked_by_mcp_auth():
     token = "test-composed-token"
     app, coordinator, store = _setup_test_app(mcp_token=token)
