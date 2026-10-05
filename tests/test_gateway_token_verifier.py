@@ -463,7 +463,8 @@ async def test_verifier_no_token_leaks_in_cache_or_logs(caplog):
 
 def test_run_mcp_forwards_allowed_hosts_and_uvicorn_config(monkeypatch):
     mock_mcp = MagicMock()
-    mock_mcp.run = MagicMock()
+    mock_server = MagicMock()
+    monkeypatch.setattr("uvicorn.Server", MagicMock(return_value=mock_server))
 
     environ = {
         "GROK_SEARCH_MCP_TRANSPORT": "http",
@@ -472,12 +473,9 @@ def test_run_mcp_forwards_allowed_hosts_and_uvicorn_config(monkeypatch):
     settings = resolve_run_settings(environ)
     run_mcp(mock_mcp, settings=settings)
 
-    mock_mcp.run.assert_called_once_with(
-        transport="http",
-        show_banner=False,
-        host="127.0.0.1",
-        port=8800,
+    mock_mcp.http_app.assert_called_once_with(
         path="/mcp",
+        transport="http",
         allowed_hosts=list(DEFAULT_ALLOWED_HOSTS),
-        uvicorn_config=dict(DEFAULT_UVICORN_CONFIG),
     )
+    mock_server.run.assert_called_once()

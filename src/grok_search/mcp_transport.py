@@ -16,6 +16,7 @@ from ipaddress import ip_address
 from typing import Any, Literal, Mapping
 
 import httpx
+import uvicorn
 from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 
@@ -379,17 +380,31 @@ def run_mcp(mcp, settings: McpRunSettings | None = None, environ: Mapping[str, s
         apply_http_auth(mcp, verifier)
     else:
         assert resolved.token is not None
-        apply_http_auth(mcp, resolved.token, resource_base_url=resolved.issuer)
+        verifier = apply_http_auth(mcp, resolved.token, resource_base_url=resolved.issuer)
 
     allowed_hosts = list(resolved.allowed_hosts or DEFAULT_ALLOWED_HOSTS)
     uvicorn_config = dict(resolved.uvicorn_config or DEFAULT_UVICORN_CONFIG)
 
-    mcp.run(
+    from grok_search.http_app import create_composed_app
+
+    mcp_app = mcp.http_app(
+        path=resolved.path,
         transport="http",
-        show_banner=False,
+        allowed_hosts=allowed_hosts,
+    )
+    composed_app = create_composed_app(mcp_app, verifier=verifier)
+
+    config_kwargs: dict[str, Any] = {
+        "timeout_graceful_shutdown": 2,
+        "lifespan": "on",
+    }
+    config_kwargs.update(uvicorn_config)
+
+    config = uvicorn.Config(
+        composed_app,
         host=resolved.host,
         port=resolved.port,
-        path=resolved.path,
-        allowed_hosts=allowed_hosts,
-        uvicorn_config=uvicorn_config,
+        **config_kwargs,
     )
+    server = uvicorn.Server(config)
+    server.run()

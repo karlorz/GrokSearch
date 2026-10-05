@@ -501,6 +501,7 @@ dependencies = [
     { name = "fastmcp" },
     { name = "httpx", extra = ["socks"] },
     { name = "mcp", extra = ["cli"] },
+    { name = "starlette" },
     { name = "tenacity" },
 ]
 
@@ -517,6 +518,7 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.21.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
+    { name = "starlette", specifier = ">=0.40.0" },
     { name = "tenacity", specifier = ">=8.0.0" },
 ]
 provides-extras = ["dev"]

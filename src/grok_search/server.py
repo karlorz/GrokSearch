@@ -49,6 +49,11 @@ _AVAILABLE_MODELS_CACHE: dict[tuple[str, str], list[str]] = {}
 _AVAILABLE_MODELS_LOCK = asyncio.Lock()
 
 
+def get_sources_cache() -> SourcesCache:
+    """Return the module-level SourcesCache instance."""
+    return _SOURCES_CACHE
+
+
 def _model_ids_from_payload(data: object) -> list[str]:
     if not isinstance(data, dict):
         return []
@@ -130,45 +135,32 @@ def _extra_results_to_sources(
     return sources
 
 
-@mcp.tool(
-    name="web_search",
-    output_schema=None,
-    description="""
-    Before using this tool, please use the plan_intent tool to plan the search carefully.
-    Performs a deep web search based on the given query and returns Grok's answer directly.
+async def execute_search(
+    query: str,
+    platform: str = "",
+    model: str = "",
+    extra_sources: int = 0,
+) -> tuple[dict, list[dict]]:
+    """Execute search and return (mcp_dict, sources_list).
 
-    This tool extracts sources if provided by upstream, caches them, and returns:
-    - session_id: string (When you feel confused or curious about the main content, use this field to invoke the get_sources tool to obtain the corresponding list of information sources)
-    - content: string (answer only)
-    - sources_count: int
-    """,
-    meta={"version": "2.0.0", "author": "guda.studio"},
-)
-async def web_search(
-    query: Annotated[
-        str,
-        "Clear, self-contained natural-language search query. Keep it concise; "
-        f"when Tavily extras are used, only the first {TAVILY_MAX_QUERY_CHARS} "
-        "characters are sent to Tavily while Grok and Firecrawl retain the full query.",
-    ],
-    platform: Annotated[str, "Target platform to focus on (e.g., 'Twitter', 'GitHub', 'Reddit'). Leave empty for general web search."] = "",
-    model: Annotated[str, "Optional model ID for this request only. This value is used ONLY when user explicitly provided."] = "",
-    extra_sources: Annotated[int, "Number of additional reference results from Tavily/Firecrawl. Set 0 to disable. Default 0."] = 0,
-) -> dict:
+    mcp_dict matches MCP web_search return contract:
+        {"session_id": str, "content": str, "sources_count": int}
+    sources_list contains the list of source dicts cached for this session.
+    """
     session_id = new_session_id()
     try:
         api_url = config.grok_api_url
         api_key = config.grok_api_key
     except ValueError as e:
         await _SOURCES_CACHE.set(session_id, [])
-        return {"session_id": session_id, "content": f"配置错误: {str(e)}", "sources_count": 0}
+        return {"session_id": session_id, "content": f"配置错误: {str(e)}", "sources_count": 0}, []
 
     effective_model = config.grok_model
     if model:
         available = await _get_available_models_cached(api_url, api_key)
         if available and model not in available:
             await _SOURCES_CACHE.set(session_id, [])
-            return {"session_id": session_id, "content": f"无效模型: {model}", "sources_count": 0}
+            return {"session_id": session_id, "content": f"无效模型: {model}", "sources_count": 0}, []
         effective_model = model
 
     grok_provider = GrokSearchProvider(api_url, api_key, effective_model)
@@ -236,7 +228,99 @@ async def web_search(
         file=sys.stderr,
         flush=True,
     )
-    return {"session_id": session_id, "content": answer, "sources_count": len(all_sources)}
+    return (
+        {"session_id": session_id, "content": answer, "sources_count": len(all_sources)},
+        all_sources,
+    )
+
+
+async def execute_fetch(url: str, ctx: Context = None) -> str:
+    """Execute URL fetch via Tavily / Firecrawl, returning markdown or error string."""
+    await log_info(ctx, f"Begin Fetch: {url}", config.debug_enabled)
+
+    result = None
+    if config.tavily_enabled:
+        result = await _call_tavily_extract(url)
+        if result:
+            await log_info(ctx, "Fetch Finished (Tavily)!", config.debug_enabled)
+            return result
+        await log_info(ctx, "Tavily unavailable or failed, trying Firecrawl...", config.debug_enabled)
+    else:
+        await log_info(ctx, "Tavily disabled, trying Firecrawl...", config.debug_enabled)
+
+    if config.firecrawl_enabled:
+        result = await _call_firecrawl_scrape(url, ctx)
+        if result:
+            await log_info(ctx, "Fetch Finished (Firecrawl)!", config.debug_enabled)
+            return result
+
+    await log_info(ctx, "Fetch Failed!", config.debug_enabled)
+    if not config.tavily_api_key and not config.firecrawl_api_key:
+        return "配置错误: TAVILY_API_KEY 和 FIRECRAWL_API_KEY 均未配置"
+    if not config.tavily_enabled and not config.firecrawl_enabled:
+        return "配置错误: Tavily 与 Firecrawl 均已禁用"
+    return "提取失败: 所有提取服务均未能获取内容"
+
+
+async def execute_map(
+    url: str,
+    instructions: str = "",
+    max_depth: int = 1,
+    max_breadth: int = 20,
+    limit: int = 50,
+    timeout: int = 150,
+) -> str:
+    """Execute site map via Tavily, returning JSON string or error string."""
+    if not config.tavily_enabled:
+        return "配置错误: Tavily 已禁用 (TAVILY_ENABLED=false)"
+    return await _call_tavily_map(url, instructions, max_depth, max_breadth, limit, timeout)
+
+
+async def execute_get_sources(session_id: str) -> dict:
+    """Retrieve cached sources for a session_id."""
+    sources = await _SOURCES_CACHE.get(session_id)
+    if sources is None:
+        return {
+            "session_id": session_id,
+            "sources": [],
+            "sources_count": 0,
+            "error": "session_id_not_found_or_expired",
+        }
+    return {"session_id": session_id, "sources": sources, "sources_count": len(sources)}
+
+
+@mcp.tool(
+    name="web_search",
+    output_schema=None,
+    description="""
+    Before using this tool, please use the plan_intent tool to plan the search carefully.
+    Performs a deep web search based on the given query and returns Grok's answer directly.
+
+    This tool extracts sources if provided by upstream, caches them, and returns:
+    - session_id: string (When you feel confused or curious about the main content, use this field to invoke the get_sources tool to obtain the corresponding list of information sources)
+    - content: string (answer only)
+    - sources_count: int
+    """,
+    meta={"version": "2.0.0", "author": "guda.studio"},
+)
+async def web_search(
+    query: Annotated[
+        str,
+        "Clear, self-contained natural-language search query. Keep it concise; "
+        f"when Tavily extras are used, only the first {TAVILY_MAX_QUERY_CHARS} "
+        "characters are sent to Tavily while Grok and Firecrawl retain the full query.",
+    ],
+    platform: Annotated[str, "Target platform to focus on (e.g., 'Twitter', 'GitHub', 'Reddit'). Leave empty for general web search."] = "",
+    model: Annotated[str, "Optional model ID for this request only. This value is used ONLY when user explicitly provided."] = "",
+    extra_sources: Annotated[int, "Number of additional reference results from Tavily/Firecrawl. Set 0 to disable. Default 0."] = 0,
+) -> dict:
+    result, _ = await execute_search(
+        query=query,
+        platform=platform,
+        model=model,
+        extra_sources=extra_sources,
+    )
+    return result
 
 
 @mcp.tool(
@@ -251,15 +335,7 @@ async def web_search(
 async def get_sources(
     session_id: Annotated[str, "Session ID from previous web_search call."]
 ) -> dict:
-    sources = await _SOURCES_CACHE.get(session_id)
-    if sources is None:
-        return {
-            "session_id": session_id,
-            "sources": [],
-            "sources_count": 0,
-            "error": "session_id_not_found_or_expired",
-        }
-    return {"session_id": session_id, "sources": sources, "sources_count": len(sources)}
+    return await execute_get_sources(session_id)
 
 
 async def _call_tavily_extract(url: str) -> str | None:
@@ -394,30 +470,7 @@ async def web_fetch(
     url: Annotated[str, "Valid HTTP/HTTPS web address pointing to the target page. Must be complete and accessible."],
     ctx: Context = None
 ) -> str:
-    await log_info(ctx, f"Begin Fetch: {url}", config.debug_enabled)
-
-    result = None
-    if config.tavily_enabled:
-        result = await _call_tavily_extract(url)
-        if result:
-            await log_info(ctx, "Fetch Finished (Tavily)!", config.debug_enabled)
-            return result
-        await log_info(ctx, "Tavily unavailable or failed, trying Firecrawl...", config.debug_enabled)
-    else:
-        await log_info(ctx, "Tavily disabled, trying Firecrawl...", config.debug_enabled)
-
-    if config.firecrawl_enabled:
-        result = await _call_firecrawl_scrape(url, ctx)
-        if result:
-            await log_info(ctx, "Fetch Finished (Firecrawl)!", config.debug_enabled)
-            return result
-
-    await log_info(ctx, "Fetch Failed!", config.debug_enabled)
-    if not config.tavily_api_key and not config.firecrawl_api_key:
-        return "配置错误: TAVILY_API_KEY 和 FIRECRAWL_API_KEY 均未配置"
-    if not config.tavily_enabled and not config.firecrawl_enabled:
-        return "配置错误: Tavily 与 Firecrawl 均已禁用"
-    return "提取失败: 所有提取服务均未能获取内容"
+    return await execute_fetch(url, ctx=ctx)
 
 
 async def _call_tavily_map(url: str, instructions: str = None, max_depth: int = 1,
@@ -476,10 +529,14 @@ async def web_map(
     limit: Annotated[int, Field(description="Total number of links to process before stopping.", ge=1, le=500)] = 50,
     timeout: Annotated[int, Field(description="Maximum time in seconds for the operation.", ge=10, le=150)] = 150
 ) -> str:
-    if not config.tavily_enabled:
-        return "配置错误: Tavily 已禁用 (TAVILY_ENABLED=false)"
-    result = await _call_tavily_map(url, instructions, max_depth, max_breadth, limit, timeout)
-    return result
+    return await execute_map(
+        url=url,
+        instructions=instructions,
+        max_depth=max_depth,
+        max_breadth=max_breadth,
+        limit=limit,
+        timeout=timeout,
+    )
 
 
 @mcp.tool(
