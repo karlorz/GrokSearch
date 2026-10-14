@@ -36,6 +36,8 @@ DEFAULT_ALLOWED_HOSTS: tuple[str, ...] = (
 DEFAULT_UVICORN_CONFIG: dict[str, Any] = {
     "forwarded_allow_ips": "127.0.0.1",
     "proxy_headers": True,
+    # Callback queries contain authorization codes; never retain HTTP access URLs.
+    "access_log": False,
 }
 
 _ENV_TRANSPORT = "GROK_SEARCH_MCP_TRANSPORT"

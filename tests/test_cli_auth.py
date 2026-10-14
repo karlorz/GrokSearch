@@ -102,7 +102,7 @@ def _setup_test_app(
 
 def test_start_returns_https_url_and_poll_secret_without_secret_in_url():
     app, coordinator, store = _setup_test_app()
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         resp = client.post("/auth/cli/start")
         assert resp.status_code == 201
         data = resp.json()
@@ -138,7 +138,7 @@ def test_start_returns_https_url_and_poll_secret_without_secret_in_url():
 def test_start_rate_limiting():
     app, coordinator, store = _setup_test_app()
     coordinator.config.rate_limit_per_min = 2
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         r1 = client.post("/auth/cli/start")
         assert r1.status_code == 201
         r2 = client.post("/auth/cli/start")
@@ -150,7 +150,7 @@ def test_start_rate_limiting():
 
 def test_approve_get_renders_page_and_sets_csrf_cookie():
     app, coordinator, store = _setup_test_app()
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         start_res = client.post("/auth/cli/start").json()
         ref = urllib.parse.parse_qs(urllib.parse.urlparse(start_res["approveUrl"]).query)["ref"][0]
 
@@ -176,7 +176,7 @@ def test_approve_get_renders_page_and_sets_csrf_cookie():
 
 def test_approve_post_deny_marks_cancelled():
     app, coordinator, store = _setup_test_app()
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         start_res = client.post("/auth/cli/start").json()
         ref = urllib.parse.parse_qs(urllib.parse.urlparse(start_res["approveUrl"]).query)["ref"][0]
 
@@ -204,7 +204,7 @@ def test_approve_post_deny_marks_cancelled():
 
 def test_approve_post_approve_redirects_to_gateway_authorize_with_pkce():
     app, coordinator, store = _setup_test_app()
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         start_res = client.post("/auth/cli/start").json()
         ref = urllib.parse.parse_qs(urllib.parse.urlparse(start_res["approveUrl"]).query)["ref"][0]
 
@@ -237,7 +237,7 @@ def test_approve_post_approve_redirects_to_gateway_authorize_with_pkce():
 
 def test_callback_binds_code_and_prevents_replay():
     app, coordinator, store = _setup_test_app()
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         start_res = client.post("/auth/cli/start").json()
         ref = urllib.parse.parse_qs(urllib.parse.urlparse(start_res["approveUrl"]).query)["ref"][0]
 
@@ -268,7 +268,7 @@ def test_callback_binds_code_and_prevents_replay():
 
 def test_check_without_secret_or_wrong_secret_does_not_leak_state():
     app, coordinator, store = _setup_test_app()
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         start_res = client.post("/auth/cli/start").json()
         run_id = start_res["authRunId"]
 
@@ -311,7 +311,7 @@ def test_successful_check_exchanges_pkce_and_second_check_consumed():
 
     app, coordinator, store = _setup_test_app(mock_gateway_handler=gateway_token_handler)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         start_res = client.post("/auth/cli/start").json()
         run_id = start_res["authRunId"]
         poll_secret = start_res["pollSecret"]
@@ -359,7 +359,7 @@ def test_successful_check_exchanges_pkce_and_second_check_consumed():
 
 def test_expiry_and_restart_invalidation():
     app, coordinator, store = _setup_test_app()
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         start_res = client.post("/auth/cli/start").json()
         run_id = start_res["authRunId"]
         poll_secret = start_res["pollSecret"]
@@ -374,7 +374,7 @@ def test_expiry_and_restart_invalidation():
 
     # Simulate server restart (empty store)
     restarted_app, restarted_coord, restarted_store = _setup_test_app()
-    with TestClient(restarted_app) as client:
+    with TestClient(restarted_app, base_url="https://search.karldigi.dev") as client:
         poll_restart = client.get(f"/auth/cli/check?authRunId={run_id}", headers={"X-CLI-Poll-Secret": poll_secret})
         assert poll_restart.status_code == 404
         assert poll_restart.json()["error"] == "not_found"
@@ -387,7 +387,7 @@ def test_composed_app_mcp_initialize_and_tools_with_bearer():
     token = "test-composed-token"
     app, coordinator, store = _setup_test_app(mcp_token=token)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         # CLI route works
         r_start = client.post("/auth/cli/start")
         assert r_start.status_code == 201
@@ -419,7 +419,7 @@ def test_composed_app_mcp_initialize_and_tools_with_bearer():
 
 def test_start_with_agent_id_and_invite_code():
     app, coordinator, store = _setup_test_app()
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         resp = client.post(
             "/auth/cli/start",
             json={
@@ -473,7 +473,7 @@ def test_cli_routes_not_blocked_by_mcp_auth():
     token = "test-composed-token"
     app, coordinator, store = _setup_test_app(mcp_token=token)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://search.karldigi.dev") as client:
         # Calls to /auth/cli/* without any Bearer token are not 401'd by MCP auth
         r = client.post("/auth/cli/start")
         assert r.status_code == 201
@@ -481,3 +481,118 @@ def test_cli_routes_not_blocked_by_mcp_auth():
         # Calls with an invalid Bearer token to /auth/cli/start are still not rejected with 401
         r_with_bearer = client.post("/auth/cli/start", headers={"Authorization": "Bearer invalid-token"})
         assert r_with_bearer.status_code == 201
+
+
+def _await_gateway(client, store):
+    start = client.post('/auth/cli/start').json()
+    ref = urllib.parse.parse_qs(urllib.parse.urlparse(start['approveUrl']).query)['ref'][0]
+    page = client.get('/auth/cli/approve', params={'ref': ref})
+    csrf = _extract_csrf(page.text)
+    redirect = client.post('/auth/cli/approve', data={'ref': ref, 'csrf_token': csrf, 'action': 'approve'}, follow_redirects=False)
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(redirect.headers['location']).query)['state'][0]
+    return start, store.get_by_id(start['authRunId']), state
+
+
+def test_callback_requires_original_browser_and_valid_state():
+    app, coordinator, store = _setup_test_app()
+    with TestClient(app, base_url='https://search.karldigi.dev') as client:
+        start, run, state = _await_gateway(client, store)
+        cookies = list(client.cookies.jar)
+        client.cookies.clear()
+        assert client.get('/auth/cli/callback', params={'state': state, 'code': 'dummy-code'}).status_code == 403
+        assert run.state == AuthRunState.AWAITING_GATEWAY
+        for cookie in cookies:
+            client.cookies.jar.set_cookie(cookie)
+        assert client.get('/auth/cli/callback', params={'state': 'wrong-state', 'code': 'dummy-code'}).status_code == 400
+        assert client.get('/auth/cli/callback', params={'state': state, 'code': 'dummy-code'}).status_code == 200
+        assert run.state == AuthRunState.READY
+
+
+def test_csrf_rejection_does_not_approve_and_cookie_is_always_secure():
+    app, _, store = _setup_test_app()
+    with TestClient(app, base_url='https://search.karldigi.dev') as client:
+        start = client.post('/auth/cli/start').json()
+        ref = urllib.parse.parse_qs(urllib.parse.urlparse(start['approveUrl']).query)['ref'][0]
+        page = client.get('/auth/cli/approve', params={'ref': ref})
+        cookie = page.headers['set-cookie'].lower()
+        assert 'secure' in cookie and 'httponly' in cookie and 'samesite=lax' in cookie
+        assert client.post('/auth/cli/approve', data={'ref': ref, 'csrf_token': 'wrong', 'action': 'approve'}).status_code == 403
+        assert store.get_by_id(start['authRunId']).state == AuthRunState.PENDING
+
+
+def test_code_deadline_and_exchange_errors_are_private():
+    sensitive = 'dummy-private-upstream-diagnostic'
+    app, _, store = _setup_test_app(mock_gateway_handler=lambda r: httpx.Response(400, text=sensitive))
+    with TestClient(app, base_url='https://search.karldigi.dev') as client:
+        start, run, state = _await_gateway(client, store)
+        client.get('/auth/cli/callback', params={'state': state, 'code': sensitive})
+        run.gateway_code_expires_at = 0
+        response = client.get('/auth/cli/check', params={'authRunId': run.run_id}, headers={'X-CLI-Poll-Secret': start['pollSecret']})
+        assert response.json()['status'] == 'expired'
+        assert run.gateway_code is None and run.pkce_verifier is None
+        start, run, state = _await_gateway(client, store)
+        client.get('/auth/cli/callback', params={'state': state, 'code': sensitive})
+        response = client.get('/auth/cli/check', params={'authRunId': run.run_id}, headers={'X-CLI-Poll-Secret': start['pollSecret']})
+        assert response.json()['status'] == 'failed'
+        assert sensitive not in response.text
+        assert run.gateway_code is None and run.pkce_verifier is None
+
+
+def test_bounded_bodies_global_quotas_and_poll_quotas():
+    app, coordinator, store = _setup_test_app()
+    with TestClient(app, base_url='https://search.karldigi.dev') as client:
+        assert client.post('/auth/cli/start', content=b'x' * 4097).status_code == 413
+        assert client.post('/auth/cli/start', content=b'{bad').status_code == 400
+        assert client.post('/auth/cli/approve', content=b'x' * 4097).status_code == 400
+        coordinator.config.global_rate_limit_per_min = 3
+        # Two starts were already charged before body parsing.
+        start = client.post('/auth/cli/start').json()
+        assert client.post('/auth/cli/start').status_code == 429
+        coordinator.config.rate_limit_per_min = 1
+        headers = {'X-CLI-Poll-Secret': start['pollSecret']}
+        assert client.get('/auth/cli/check', params={'authRunId': start['authRunId']}, headers=headers).status_code == 200
+        assert client.get('/auth/cli/check', params={'authRunId': start['authRunId']}, headers=headers).status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_single_collector_exchanges_once_and_shutdown_closes_client():
+    import asyncio
+    from starlette.requests import Request
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def exchange(request):
+        calls.append(request)
+        entered.set()
+        await release.wait()
+        return httpx.Response(200, json={'access_token': 'dummy-issued-access', 'expires_in': 123, 'token_type': 'Bearer', 'refresh_token': 'dummy-discard'})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(exchange))
+    coordinator = CliAuthCoordinator(CliAuthConfig(oauth_client_id='fixed-client'), http_client=http_client)
+    run, secret = coordinator.store.create_run()
+    run.state, run.gateway_code, run.pkce_verifier = AuthRunState.READY, 'dummy-code', 'dummy-verifier'
+    run.gateway_code_expires_at = run.expires_at
+    request = Request({'type': 'http', 'method': 'GET', 'path': '/auth/cli/check', 'query_string': f'authRunId={run.run_id}'.encode(), 'headers': [(b'x-cli-poll-secret', secret.encode())]})
+    first = asyncio.create_task(coordinator.handle_check(request))
+    await entered.wait()
+    second = await coordinator.handle_check(request)
+    assert json.loads(second.body)['status'] == 'claiming'
+    release.set()
+    result = json.loads((await first).body)
+    assert result['status'] == 'success' and result['expires_in'] == 123
+    assert 'refresh_token' not in result and len(calls) == 1
+    assert json.loads((await coordinator.handle_check(request)).body)['status'] == 'consumed'
+    await coordinator.aclose()
+    assert http_client.is_closed
+
+
+@pytest.mark.parametrize('override', [
+    {'GROK_SEARCH_PUBLIC_ORIGIN': 'http://search.karldigi.dev'},
+    {'GROK_SEARCH_CLI_OAUTH_REDIRECT_URI': 'https://attacker.invalid/callback'},
+    {'GROK_SEARCH_MCP_OAUTH_ISSUER': 'https://attacker.invalid'},
+    {'GUDA_BASE_URL': 'https://attacker.invalid'},
+])
+def test_production_auth_configuration_is_pinned(override):
+    with pytest.raises(ValueError):
+        resolve_cli_auth_config(override)

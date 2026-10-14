@@ -10,6 +10,7 @@ import base64
 import hashlib
 import hmac
 import html
+import json
 import os
 import secrets
 import time
@@ -44,7 +45,7 @@ _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Content-Security-Policy": (
-        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https:; frame-ancestors 'none'"
+        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'"
     ),
 }
 
@@ -102,6 +103,7 @@ class CliAuthConfig:
     poll_interval_seconds: int = 2
     max_active_runs: int = 1000
     rate_limit_per_min: int = 60
+    global_rate_limit_per_min: int = 600
 
 
 def resolve_cli_auth_config(environ: Mapping[str, str] | None = None) -> CliAuthConfig:
@@ -121,6 +123,15 @@ def resolve_cli_auth_config(environ: Mapping[str, str] | None = None) -> CliAuth
     # Gateway loopback base for server-side token exchange
     guda_base = source.get("GUDA_BASE_URL", "http://127.0.0.1:8080").rstrip("/")
     gateway_token_url = f"{guda_base}/token"
+    # Production configuration is pinned; fixtures inject CliAuthConfig directly.
+    if (origin != "https://search.karldigi.dev"
+            or redirect_uri != f"{origin}/auth/cli/callback"
+            or issuer != origin):
+        raise ValueError("CLI auth requires the pinned HTTPS origin, issuer and callback")
+    gateway = urllib.parse.urlsplit(guda_base)
+    if (gateway.scheme != "http" or gateway.hostname not in ("127.0.0.1", "::1", "localhost")
+            or gateway.username or gateway.password or gateway.path or gateway.query or gateway.fragment):
+        raise ValueError("CLI token exchange requires a trusted loopback gateway")
 
     return CliAuthConfig(
         origin=origin,
@@ -140,6 +151,7 @@ class AuthRunStore:
         self._runs_by_approval_ref: dict[str, str] = {}  # ref -> run_id
         self._runs_by_oauth_state: dict[str, str] = {}   # oauth_state -> run_id
         self._rate_limits: dict[str, list[float]] = {}
+        self._next_rate_sweep = 0.0
 
     def prune_expired(self, now: float | None = None) -> None:
         current = now if now is not None else time.time()
@@ -159,7 +171,16 @@ class AuthRunStore:
 
     def is_rate_limited(self, client_key: str, limit: int = 60, window: float = 60.0) -> bool:
         now = time.time()
-        timestamps = self._rate_limits.setdefault(client_key, [])
+        # Prune active buckets directly; sweep inactive addresses at most once a window.
+        if now >= self._next_rate_sweep:
+            self._rate_limits = {
+                key: values for key, values in self._rate_limits.items()
+                if values and now - values[-1] < window
+            }
+            self._next_rate_sweep = now + window
+        if client_key not in self._rate_limits and len(self._rate_limits) >= 4096:
+            return True
+        timestamps = self._rate_limits.get(client_key, [])
         self._rate_limits[client_key] = [t for t in timestamps if now - t < window]
         if len(self._rate_limits[client_key]) >= limit:
             return True
@@ -246,6 +267,26 @@ class CliAuthCoordinator:
             self._http_client = httpx.AsyncClient(timeout=5.0)
         return self._http_client
 
+    async def aclose(self) -> None:
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
+
+    def _rate_limited(self, request: Request, operation: str) -> bool:
+        client_ip = request.client.host if request.client else "unknown"
+        return (
+            self.store.is_rate_limited(f"{operation}:global", self.config.global_rate_limit_per_min)
+            or self.store.is_rate_limited(f"{operation}:{client_ip}", self.config.rate_limit_per_min)
+        )
+
+    async def _bounded_body(self, request: Request) -> bytes:
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > 4096:
+                raise ValueError("payload_too_large")
+            body.extend(chunk)
+        return bytes(body)
+
     def _apply_security_headers(self, response: Response) -> Response:
         for k, v in _SECURITY_HEADERS.items():
             response.headers[k] = v
@@ -258,8 +299,7 @@ class CliAuthCoordinator:
 
     async def handle_start(self, request: Request) -> Response:
         """POST /auth/cli/start"""
-        client_ip = request.client.host if request.client else "unknown"
-        if self.store.is_rate_limited(f"start:{client_ip}", limit=self.config.rate_limit_per_min):
+        if self._rate_limited(request, "start"):
             return self._apply_security_headers(
                 JSONResponse(
                     {"error": "rate_limited", "message": "Too many auth requests"},
@@ -272,13 +312,9 @@ class CliAuthCoordinator:
         invite_code: str | None = None
         # Bounded body reading if present
         try:
-            body = await request.body()
-            if len(body) > 4096:
-                return self._apply_security_headers(
-                    JSONResponse({"error": "payload_too_large"}, status_code=413)
-                )
+            body = await self._bounded_body(request)
             if body:
-                data = await request.json()
+                data = json.loads(body)
                 if isinstance(data, dict):
                     if "client_name" in data:
                         cname = str(data["client_name"]).strip()
@@ -292,8 +328,9 @@ class CliAuthCoordinator:
                         icode = str(data["invite_code"]).strip()
                         if icode and len(icode) <= 128:
                             invite_code = icode
-        except Exception:
-            pass
+        except ValueError as exc:
+            code = "payload_too_large" if str(exc) == "payload_too_large" else "invalid_request"
+            return self._apply_security_headers(JSONResponse({"error": code}, status_code=413 if code == "payload_too_large" else 400))
 
         if not self.config.oauth_client_id:
             return self._apply_security_headers(
@@ -392,23 +429,25 @@ class CliAuthCoordinator:
         response = self._render_page(status_code=200, title="Authorize GrokSearch CLI", content=body_html)
 
         cookie_name = self._cookie_name(request)
-        is_secure = request.url.scheme == "https"
         response.set_cookie(
             key=cookie_name,
             value=csrf_token,
             max_age=int(run.expires_at - time.time()) + 60,
             httponly=True,
             samesite="lax",
-            secure=is_secure,
+            secure=True,
             path="/auth/cli",
         )
         return response
 
     async def handle_approve_post(self, request: Request) -> Response:
         """POST /auth/cli/approve"""
+        if self._rate_limited(request, "browser"):
+            return self._render_page(429, "Too Many Requests", "<p>Try again later.</p>")
         try:
-            form = await request.form()
-        except Exception:
+            body = await self._bounded_body(request)
+            form = dict(urllib.parse.parse_qsl(body.decode("utf-8"), max_num_fields=8))
+        except (ValueError, UnicodeDecodeError):
             return self._render_page(status_code=400, title="Bad Request", content="<p>Invalid form data.</p>")
 
         ref = str(form.get("ref", "")).strip()
@@ -452,6 +491,8 @@ class CliAuthCoordinator:
         run.pkce_verifier = verifier
         self.store.bind_oauth_state(run, oauth_state)
         run.state = AuthRunState.AWAITING_GATEWAY
+        # Bound from the earliest possible issuance, including delayed callbacks.
+        run.gateway_code_expires_at = min(run.expires_at, time.time() + 300)
 
         # Build redirect to gateway /authorize
         params: dict[str, str] = {
@@ -478,14 +519,7 @@ class CliAuthCoordinator:
         code = request.query_params.get("code", "").strip()
         error = request.query_params.get("error", "").strip()
 
-        if error:
-            return self._render_page(
-                status_code=400,
-                title="Authorization Error",
-                content=f"<p>Gateway reported an error: {html.escape(error)}</p>",
-            )
-
-        if not query_state or not code:
+        if not query_state or (not code and not error):
             return self._render_page(
                 status_code=400,
                 title="Invalid Callback",
@@ -507,11 +541,20 @@ class CliAuthCoordinator:
                 content="<p>Run is not awaiting callback or has expired.</p>",
             )
 
+        cookie = request.cookies.get(_CSRF_COOKIE_NAME, "")
+        if not cookie or not run.csrf_token_hash or not hmac.compare_digest(_hash_secret(cookie), run.csrf_token_hash):
+            return self._render_page(403, "Forbidden", "<p>Return using the browser that approved this request.</p>")
+        if error:
+            run.state = AuthRunState.CANCELLED
+            run.pkce_verifier = None
+            self.store._runs_by_oauth_state.pop(query_state, None)
+            run.oauth_state = None
+            return self._render_page(400, "Authorization Denied", "<p>Approval was denied. Start a new approval from your terminal.</p>")
         # Store code transiently and mark ready
         run.gateway_code = code
         # Gateway codes expire in 5 minutes; bound run to 5 min from now or original expiry, whichever is earlier
         gateway_exp = time.time() + 300
-        run.gateway_code_expires_at = min(run.expires_at, gateway_exp)
+        run.gateway_code_expires_at = min(run.gateway_code_expires_at or gateway_exp, run.expires_at, gateway_exp)
         run.state = AuthRunState.READY
 
         # Invalidate oauth_state to prevent callback replay
@@ -531,6 +574,8 @@ class CliAuthCoordinator:
 
     async def handle_check(self, request: Request) -> Response:
         """GET /auth/cli/check?authRunId=... Requires X-CLI-Poll-Secret header."""
+        if self._rate_limited(request, "check"):
+            return self._apply_security_headers(JSONResponse({"error": "rate_limited"}, status_code=429))
         run_id = request.query_params.get("authRunId", "").strip()
         poll_secret = request.headers.get("X-CLI-Poll-Secret", "").strip()
 
@@ -542,7 +587,7 @@ class CliAuthCoordinator:
 
         run = self.store.get_by_id(run_id)
         opaque_not_found = JSONResponse(
-            {"error": "not_found", "message": "Auth run not found or expired"},
+            {"error": "not_found", "message": "Auth run unavailable (including service restart). Run auth-start for a new approval."},
             status_code=404,
         )
         if not run:
@@ -554,8 +599,14 @@ class CliAuthCoordinator:
 
         # Check expiry
         now = time.time()
-        if run.is_expired(now):
+        if run.is_expired(now) or (
+            run.state == AuthRunState.READY and (
+                run.gateway_code_expires_at is None or now >= run.gateway_code_expires_at
+            )
+        ):
             run.state = AuthRunState.EXPIRED
+            run.gateway_code = None
+            run.pkce_verifier = None
 
         if run.state == AuthRunState.PENDING or run.state == AuthRunState.AWAITING_GATEWAY:
             return self._apply_security_headers(
@@ -595,6 +646,7 @@ class CliAuthCoordinator:
             code = run.gateway_code
             verifier = run.pkce_verifier
             run.gateway_code = None  # Single-use: zero out immediately
+            run.pkce_verifier = None
 
             if not code or not verifier:
                 run.state = AuthRunState.FAILED
@@ -616,7 +668,7 @@ class CliAuthCoordinator:
             # Discard refresh token; never store raw access token on server.
             run.state = AuthRunState.CONSUMED
             access_token = token_data.get("access_token")
-            expires_in = token_data.get("expires_in", 7200)
+            expires_in = token_data["expires_in"]
             token_type = token_data.get("token_type", "Bearer")
 
             return self._apply_security_headers(
@@ -656,13 +708,16 @@ class CliAuthCoordinator:
         try:
             resp = await client.post(self.config.gateway_token_url, data=data)
             if resp.status_code != 200:
-                return None, f"Gateway error {resp.status_code}: {resp.text}"
+                return None, "Gateway rejected the token exchange. Start a new approval."
             token_resp = resp.json()
-            if not isinstance(token_resp, dict) or "access_token" not in token_resp:
+            if (not isinstance(token_resp, dict)
+                    or not isinstance(token_resp.get("access_token"), str) or not token_resp["access_token"].strip()
+                    or type(token_resp.get("expires_in")) is not int or token_resp["expires_in"] <= 0
+                    or token_resp.get("token_type", "Bearer").lower() != "bearer"):
                 return None, "Malformed gateway token response"
             return token_resp, None
-        except Exception as exc:
-            return None, f"Gateway token exchange network error: {str(exc)}"
+        except Exception:
+            return None, "Gateway token exchange unavailable. Start a new approval; collection cannot be replayed."
 
     def _render_page(self, status_code: int, title: str, content: str) -> HTMLResponse:
         doc = f"""<!DOCTYPE html>

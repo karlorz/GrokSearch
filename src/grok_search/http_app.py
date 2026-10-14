@@ -66,11 +66,14 @@ def create_composed_app(
     async def composed_lifespan(app: Starlette) -> AsyncGenerator[None, None]:
         # Delegate lifespan directly to the mcp_app's lifespan context
         lifespan_ctx = getattr(mcp_app.router, "lifespan_context", None)
-        if lifespan_ctx is not None:
-            async with lifespan_ctx(mcp_app):
+        try:
+            if lifespan_ctx is not None:
+                async with lifespan_ctx(mcp_app):
+                    yield
+            else:
                 yield
-        else:
-            yield
+        finally:
+            await coordinator.aclose()
 
     # Mount mcp_app after CLI and REST routes so they are dispatched directly
     routes = [
