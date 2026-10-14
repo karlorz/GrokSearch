@@ -8,7 +8,7 @@ public CLI auth endpoints (`/auth/cli/*`) without MCP bearer middleware.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Mapping
 
 from fastmcp.server.auth import TokenVerifier
 from starlette.applications import Starlette
@@ -23,6 +23,7 @@ def create_composed_app(
     coordinator: CliAuthCoordinator | None = None,
     verifier: TokenVerifier | None = None,
     rest_handlers: RestApiHandlers | None = None,
+    cli_auth_environ: Mapping[str, str] | None = None,
 ) -> Starlette:
     """Create a composed Starlette app combining CLI auth routes, REST API, and FastMCP app.
 
@@ -34,12 +35,14 @@ def create_composed_app(
             If not passed, falls back to mcp_app.state.fastmcp_server.auth if present.
         rest_handlers: Optional RestApiHandlers instance. If None, one is created
             using verifier.
+        cli_auth_environ: Optional explicit environment for CLI configuration;
+            uses the process environment when not passed.
 
     Returns:
         A Starlette application with /auth/cli/*, /api/v1/* and /mcp routes.
     """
     if coordinator is None:
-        coordinator = CliAuthCoordinator(config=resolve_cli_auth_config())
+        coordinator = CliAuthCoordinator(config=resolve_cli_auth_config(cli_auth_environ))
 
     cli_routes = [
         Route("/auth/cli/start", coordinator.handle_start, methods=["POST"]),

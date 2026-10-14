@@ -595,4 +595,4 @@ async def test_single_collector_exchanges_once_and_shutdown_closes_client():
 ])
 def test_production_auth_configuration_is_pinned(override):
     with pytest.raises(ValueError):
-        resolve_cli_auth_config(override)
+        resolve_cli_auth_config({'GROK_SEARCH_CLI_OAUTH_CLIENT_ID': 'fixed-client', **override})

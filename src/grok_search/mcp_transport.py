@@ -394,7 +394,7 @@ def run_mcp(mcp, settings: McpRunSettings | None = None, environ: Mapping[str, s
         transport="http",
         allowed_hosts=allowed_hosts,
     )
-    composed_app = create_composed_app(mcp_app, verifier=verifier)
+    composed_app = create_composed_app(mcp_app, verifier=verifier, cli_auth_environ=environ)
 
     config_kwargs: dict[str, Any] = {
         "timeout_graceful_shutdown": 2,

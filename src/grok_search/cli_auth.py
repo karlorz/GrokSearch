@@ -109,8 +109,14 @@ class CliAuthConfig:
 def resolve_cli_auth_config(environ: Mapping[str, str] | None = None) -> CliAuthConfig:
     source = os.environ if environ is None else environ
 
-    origin = source.get("GROK_SEARCH_PUBLIC_ORIGIN", "https://search.karldigi.dev").rstrip("/")
     client_id = source.get("GROK_SEARCH_CLI_OAUTH_CLIENT_ID", "").strip()
+    # An empty fixed-client ID disables the bridge. MCP's independently valid
+    # custom issuer/verifier configuration must not enable or configure CLI auth.
+    # Keep disabled URLs at safe defaults; never construct a custom-origin flow.
+    if not client_id:
+        return CliAuthConfig()
+
+    origin = source.get("GROK_SEARCH_PUBLIC_ORIGIN", "https://search.karldigi.dev").rstrip("/")
     redirect_uri = source.get(
         "GROK_SEARCH_CLI_OAUTH_REDIRECT_URI",
         f"{origin}/auth/cli/callback",
