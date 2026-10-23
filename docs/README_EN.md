@@ -46,6 +46,12 @@ As shown above, with `grok-search MCP` enabled under the same experimental condi
 
 ## 2. Installation
 
+### Use the hosted service from an agent
+
+For the maintained hosted service, use the [agent setup guide](https://github.com/karlorz/agent-skills/tree/main/skills/grok-search). It provides separate installation requests for a [Muse vaulted connector](https://github.com/karlorz/agent-skills/blob/main/skills/grok-search/skills/grok-search/references/muse-connector.md) and [standalone Skill + CLI](https://github.com/karlorz/agent-skills/blob/main/skills/grok-search/skills/grok-search/references/install.md). Reuse native MCP tools or an existing working connection when available. Connector setup checks a shared non-secret profile against live OAuth discovery, uses the host's secure authorization UI, and verifies a small search and source retrieval. Human sign-in and consent are required for a new grant.
+
+These are client installation routes; they do not require installing this server locally or redeploying a working hosted service. The following instructions cover running your own server.
+
 ### Prerequisites
 
 - Python 3.10+
