@@ -6,6 +6,7 @@ src_dir = Path(__file__).parent.parent
 if str(src_dir) not in sys.path:
     sys.path.insert(0, str(src_dir))
 
+from grok_search.authorization import require_config_write
 from fastmcp import FastMCP, Context
 from typing import Annotated, Optional
 from pydantic import Field
@@ -647,6 +648,7 @@ async def switch_model(
 ) -> str:
     import json
 
+    require_config_write()
     try:
         is_deprecated = config.is_deprecated_model(model)
         previous_model = config.grok_model
@@ -705,6 +707,9 @@ async def toggle_builtin_tools(
     action: Annotated[str, "Action to perform: 'on' (block built-in), 'off' (allow built-in), or 'status' (check current state)."] = "status"
 ) -> str:
     import json
+
+    if action in {"on", "enable", "off", "disable"}:
+        require_config_write()
 
     # Locate project root
     root = Path.cwd()

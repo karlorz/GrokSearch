@@ -274,3 +274,17 @@ A: Say "Show grok-search configuration info" in a Claude conversation to automat
 
 [![Star History Chart](https://api.star-history.com/svg?repos=GuDaStudio/GrokSearch&type=date&legend=top-left)](https://www.star-history.com/#GuDaStudio/GrokSearch&type=date&legend=top-left)
 </div>
+
+## Hosted MCP authorization permissions
+
+The hosted gateway supports existing DCR clients and HTTPS client metadata
+identities alongside PKCE S256. OAuth grants are bound to the canonical MCP
+resource; refresh tokens rotate, and replay invalidates their successor family.
+Serialize refresh and save the new credentials before another refresh request.
+
+Search, fetch, map, planning and safe diagnostics remain available with `mcp`.
+OAuth clients need explicit operator consent for `config:write` before changing
+the server model or mutating built-in tool settings. Existing manual host bearer
+credentials and local stdio retain operator access. A client authorized without
+`offline_access` is not issued a refresh token. Existing OAuth registrations and
+normal search access are preserved; settings access requires a new explicit grant.

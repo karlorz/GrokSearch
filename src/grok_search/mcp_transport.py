@@ -72,11 +72,13 @@ class GatewayTokenVerifier(TokenVerifier):
         negative_cache_ttl: float = 60.0,
         transport: httpx.AsyncBaseTransport | None = None,
         resource_base_url: str | None = None,
+        expected_resource: str | None = None,
     ):
         super().__init__(
-            required_scopes=required_scopes,
+            required_scopes=["mcp"] if required_scopes is None else required_scopes,
             resource_base_url=resource_base_url,
         )
+        self.expected_resource = expected_resource
         self.verify_url = verify_url
         self.internal_token = internal_token
         self.timeout = timeout
@@ -105,7 +107,7 @@ class GatewayTokenVerifier(TokenVerifier):
             response = await self._client.post(
                 self.verify_url,
                 headers={"X-Internal-Token": self.internal_token},
-                json={"token": token},
+                json={"token": token, **({"resource": self.expected_resource} if self.expected_resource else {})},
             )
         except (httpx.RequestError, Exception):
             # Gateway blip must not lock out good keys -> do not negatively cache
@@ -120,9 +122,16 @@ class GatewayTokenVerifier(TokenVerifier):
             if not isinstance(data, dict):
                 return None
 
+            if self.expected_resource and data.get("oauth_owned") is True:
+                if data.get("resource") != self.expected_resource:
+                    return None
+
             client_id = data.get("client_id") or data.get("name") or "gateway-key"
             raw_scopes = data.get("scopes")
             scopes = raw_scopes if isinstance(raw_scopes, list) else ["mcp"]
+
+            if not all(isinstance(scope, str) for scope in scopes):
+                return None
 
             if self.required_scopes:
                 token_scopes = set(scopes)
@@ -263,6 +272,7 @@ def build_static_token_verifier(
             token: {
                 "client_id": "grok-search-http",
                 "scopes": ["mcp"],
+                "oauth_owned": False,
             }
         }
     )
@@ -277,6 +287,7 @@ def build_gateway_token_verifier(
     required_scopes: list[str] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
     resource_base_url: str | None = None,
+    expected_resource: str | None = None,
 ) -> GatewayTokenVerifier:
     return GatewayTokenVerifier(
         verify_url=verify_url,
@@ -284,6 +295,7 @@ def build_gateway_token_verifier(
         required_scopes=required_scopes,
         transport=transport,
         resource_base_url=resource_base_url,
+        expected_resource=expected_resource,
     )
 
 
@@ -378,6 +390,7 @@ def run_mcp(mcp, settings: McpRunSettings | None = None, environ: Mapping[str, s
             verify_url=resolved.verify_url,
             internal_token=resolved.internal_token,
             resource_base_url=resolved.issuer,
+            expected_resource=f"{resolved.issuer}{resolved.path}" if resolved.issuer else None,
         )
         apply_http_auth(mcp, verifier)
     else:
