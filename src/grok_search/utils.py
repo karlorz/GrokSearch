@@ -209,6 +209,9 @@ rank_sources_prompt = (
 search_prompt = """
 # Core Instruction
 
+0. Return a finished answer in the answer channel with verifiable HTTP(S) source URLs. Never return tool-call logs, search traces, or clarifying questions as the answer. If the requested facts cannot be verified, return only SEARCH_INCOMPLETE. Do not invent a ranking or substitute a different date or metric.
+   For dollar volume / traded value / 成交额 rankings, dollar volume means price times share volume in USD, never share volume alone. Use the requested trading session and universe. State the price, share volume, units, source and date; label close price times volume as an estimate (actual traded value is the sum of trade price times trade size). If those inputs or comparable coverage are unavailable, return SEARCH_INCOMPLETE.
+
 1. User needs may be vague. Think divergently, infer intent from multiple angles, and leverage full conversation context to progressively clarify their true needs.
 2. **Breadth-First Search**—Approach problems from multiple dimensions. Brainstorm 5+ perspectives and execute parallel searches for each. Consult as many high-quality sources as possible before responding.
 3. **Depth-First Search**—After broad exploration, select ≥2 most relevant perspectives for deep investigation into specialized knowledge.

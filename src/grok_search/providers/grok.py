@@ -7,8 +7,11 @@ from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait
 from tenacity.wait import wait_base
 from zoneinfo import ZoneInfo
 from .base import BaseSearchProvider
-from .contracts import NormalizedSource, SearchOutput, merge_normalized_sources
-from ..utils import search_prompt, fetch_prompt, url_describe_prompt, rank_sources_prompt
+from .contracts import (
+    NormalizedSource, SearchOutput, merge_normalized_sources,
+    SEARCH_INCOMPLETE_MESSAGE, has_tool_trace, is_failure_envelope,
+)
+from ..utils import search_prompt, fetch_prompt, url_describe_prompt, rank_sources_prompt, extract_unique_urls
 from ..logger import log_info
 from ..config import config
 
@@ -152,7 +155,27 @@ class GrokSearchProvider(BaseSearchProvider):
 
         await log_info(ctx, f"platform_prompt: { query + platform_prompt}", config.debug_enabled)
 
-        return await self._execute_stream_with_retry(headers, payload, ctx)
+        # A completed HTTP stream can contain only reasoning/tool activity. Allow
+        # one fresh attempt; never recycle those traces as assistant/user content.
+        for attempt in range(2):
+            result = await self._execute_stream_with_retry(headers, payload, ctx)
+            content = result.content.strip()
+            if (
+                content and not has_tool_trace(content)
+                and not is_failure_envelope(content)
+                and (result.sources or extract_unique_urls(content))
+            ):
+                return result
+            if attempt == 0:
+                payload["messages"].append({
+                    "role": "user",
+                    "content": (
+                        "The previous attempt produced no usable sourced final answer. "
+                        "Return the final answer with source URLs in the answer channel. "
+                        "If the requested facts cannot be verified, return only SEARCH_INCOMPLETE."
+                    ),
+                })
+        return SearchOutput(content=SEARCH_INCOMPLETE_MESSAGE)
 
     async def fetch(self, url: str, ctx=None) -> str:
         headers = {
@@ -179,58 +202,50 @@ class GrokSearchProvider(BaseSearchProvider):
             return None
         return NormalizedSource.from_mapping(payload, provider="grok")
 
-    @classmethod
-    def _parts_from_event(cls, data: Any) -> tuple[str, str, list[NormalizedSource]]:
-        if not isinstance(data, dict):
-            return "", "", []
-
-        content = ""
-        reasoning = ""
-        sources: list[NormalizedSource] = []
-        choices = data.get("choices")
-        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
-            choice = choices[0]
-            delta = choice.get("delta")
-            message = choice.get("message")
-
-            for container in (delta, message):
-                if not isinstance(container, dict):
-                    continue
-                value = container.get("content")
-                if isinstance(value, str):
-                    content += value
-                reason_value = container.get("reasoning_content")
-                if isinstance(reason_value, str):
-                    reasoning += reason_value
-                annotations = container.get("annotations")
-                if isinstance(annotations, list):
-                    for annotation in annotations:
-                        source = cls._source_from_payload(annotation)
-                        if source is not None:
-                            sources.append(source)
-
-        search_sources = data.get("search_sources")
-        if isinstance(search_sources, list):
-            for item in search_sources:
-                source = cls._source_from_payload(item)
-                if source is not None:
-                    sources.append(source)
-
-        return content, reasoning, sources
-
     async def _parse_streaming_response(self, response, ctx=None) -> SearchOutput:
         content_parts: list[str] = []
-        reasoning_parts: list[str] = []
         source_candidates: list[NormalizedSource] = []
         plain_body_buffer: list[str] = []
+        role = "assistant"
+        incomplete = False
+        streaming = False
+        completed = False
 
         def _consume_event(data: Any) -> None:
-            event_content, event_reasoning, event_sources = self._parts_from_event(data)
-            if event_content:
-                content_parts.append(event_content)
-            if event_reasoning:
-                reasoning_parts.append(event_reasoning)
-            source_candidates.extend(event_sources)
+            nonlocal role, incomplete, completed
+            if not isinstance(data, dict):
+                return
+            choices = data.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                choice = choices[0]
+                finish_reason = choice.get("finish_reason")
+                if finish_reason in ("length", "tool_calls", "function_call", "content_filter"):
+                    incomplete = True
+                if finish_reason == "stop":
+                    completed = True
+                for container in (choice.get("delta"), choice.get("message")):
+                    if not isinstance(container, dict):
+                        continue
+                    role = container.get("role", role)
+                    if role != "assistant":
+                        continue
+                    # Only the answer channel is public. reasoning_content and
+                    # tool_calls are intentionally never accumulated as content.
+                    value = container.get("content")
+                    if isinstance(value, str):
+                        content_parts.append(value)
+                    annotations = container.get("annotations")
+                    if isinstance(annotations, list):
+                        for annotation in annotations:
+                            source = self._source_from_payload(annotation)
+                            if source is not None:
+                                source_candidates.append(source)
+            search_sources = data.get("search_sources")
+            if isinstance(search_sources, list):
+                for item in search_sources:
+                    source = self._source_from_payload(item)
+                    if source is not None:
+                        source_candidates.append(source)
 
         async for line in response.aiter_lines():
             line = line.strip()
@@ -239,7 +254,9 @@ class GrokSearchProvider(BaseSearchProvider):
 
             # 兼容 "data: {...}" 和 "data:{...}" 两种 SSE 格式
             if line.startswith("data:"):
+                streaming = True
                 if line in ("data: [DONE]", "data:[DONE]"):
+                    completed = True
                     continue
                 try:
                     # 去掉 "data:" 前缀，并去除可能的空格
@@ -259,9 +276,7 @@ class GrokSearchProvider(BaseSearchProvider):
             except json.JSONDecodeError:
                 pass
 
-        content = "".join(content_parts)
-        if not content.strip():
-            content = "".join(reasoning_parts)
+        content = "" if incomplete or (streaming and not completed) else "".join(content_parts)
         await log_info(ctx, f"content: {content}", config.debug_enabled)
 
         return SearchOutput(

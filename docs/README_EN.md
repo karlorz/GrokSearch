@@ -172,6 +172,29 @@ Executes AI-driven web search via Grok API. By default it returns only Grok's an
 
 `web_search` does not expand sources in the response; it only returns `sources_count`. Sources are cached server-side by `session_id` and can be fetched with `get_sources`.
 
+Only finished assistant answers with sources are accepted. Reasoning, tool activity,
+truncated output, source-only responses and explicit `SEARCH_INCOMPLETE` responses
+are not answers. The engine makes one recovery attempt for unusable output, preserving
+the original query; each attempt retains the existing transport retry policy.
+If neither attempt produces a usable answer, MCP returns a fixed
+`search_incomplete:` message. Authenticated `POST /api/v1/search` returns HTTP 422
+with `ok: false`, `error.code: "search_incomplete"` and a `session_id`. This outcome
+is distinct from transport failures, which retain their HTTP 502 error handling.
+No rejected traces are returned or added to the recovery request.
+
+For dated dollar-volume rankings, the search instructions require price × share
+volume in USD, the requested session and universe, and source inputs. Closing
+price × volume is an estimate; actual traded value sums price × size for each
+trade. Unverifiable rankings must return `SEARCH_INCOMPLETE` rather than share-volume
+rankings or clarification essays. Source URLs alone do not independently verify a
+model's numerical claims.
+
+`scripts/check_search_completion.py` exercises consecutive authenticated REST
+requests and MCP SDK calls against the configured live upstream. Run it with the
+candidate `src` on `PYTHONPATH` and the service environment already supplied. It
+uses in-process transports and an ephemeral REST test bearer, prints only result
+metadata, and leaves the production listener unchanged.
+
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `query` | string | Yes | - | Search query |

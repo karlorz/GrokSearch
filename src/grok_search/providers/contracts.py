@@ -106,10 +106,25 @@ class SearchOutput:
 
 UPSTREAM_ERROR_PREFIX = "upstream_error:"
 UPSTREAM_EMPTY_PREFIX = "upstream_empty:"
+SEARCH_INCOMPLETE_MARKER = "SEARCH_INCOMPLETE"
+SEARCH_INCOMPLETE_MESSAGE = (
+    "search_incomplete: upstream did not produce a finished, sourced answer; "
+    "no verified result is available"
+)
+_TOOL_TRACE = re.compile(
+    r"(?im)^\s*(?:[🔍🌐🔎]\s*)?(?:web_search|web_fetch|browse_page|"
+    r"search_query|x_keyword_search|x_semantic_search)\s*[:(]"
+)
 _URL_IN_TEXT = re.compile(r"https?://\S+", re.IGNORECASE)
 
 
+def has_tool_trace(content: str) -> bool:
+    return bool(_TOOL_TRACE.search(content))
+
+
 def envelope_kind(content: str) -> str:
+    if SEARCH_INCOMPLETE_MARKER in content.upper():
+        return "search_incomplete"
     if content.startswith(UPSTREAM_ERROR_PREFIX):
         return "upstream_error"
     if content.startswith(UPSTREAM_EMPTY_PREFIX):
@@ -131,9 +146,9 @@ def envelope_from_grok_result(
         detail = _URL_IN_TEXT.sub("[url]", " ".join(detail.split()))[:240]
         return SearchOutput(content=f"{UPSTREAM_ERROR_PREFIX} {detail}")
     result = result or SearchOutput()
+    if has_tool_trace(result.content) or envelope_kind(result.content) == "search_incomplete":
+        return SearchOutput(content=SEARCH_INCOMPLETE_MESSAGE)
     if (result.content or "").strip():
-        return result
-    if result.sources:
         return result
     return SearchOutput(
         content=f"{UPSTREAM_EMPTY_PREFIX} grok stream completed with no answer content"

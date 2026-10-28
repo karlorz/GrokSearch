@@ -17,7 +17,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from grok_search.providers.contracts import is_failure_envelope
+from grok_search.providers.contracts import envelope_kind, is_failure_envelope
 
 MAX_REQUEST_BODY_BYTES = 64 * 1024  # 64 KB max body
 
@@ -266,6 +266,14 @@ class RestApiHandlers:
 
         content = mcp_res.get("content", "")
         session_id = mcp_res.get("session_id", "")
+
+        if envelope_kind(content) == "search_incomplete":
+            return error_response(
+                code="search_incomplete",
+                message=content,
+                status_code=422,
+                extra={"session_id": session_id},
+            )
 
         # Check for upstream failure envelopes or empty content
         if not content or is_failure_envelope(content):

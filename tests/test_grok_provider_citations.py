@@ -187,6 +187,7 @@ async def test_malformed_events_do_not_discard_valid_content_or_sources() -> Non
             "data: {not-json",
             _sse({"choices": [None, {"delta": {"content": "ignored"}}]}),
             _sse({"choices": [{"delta": {"content": " after"}}]}),
+            "data: [DONE]",
         ]
     )
 
@@ -199,7 +200,7 @@ async def test_malformed_events_do_not_discard_valid_content_or_sources() -> Non
 
 
 @pytest.mark.asyncio
-async def test_reasoning_content_becomes_answer_when_delta_content_empty() -> None:
+async def test_reasoning_content_never_becomes_answer_when_delta_content_empty() -> None:
     response = _StreamingResponse(
         [
             _sse(
@@ -220,7 +221,7 @@ async def test_reasoning_content_becomes_answer_when_delta_content_empty() -> No
 
     result = await _provider()._parse_streaming_response(response)
 
-    assert result.content == "Latest convex is 1.45.0"
+    assert result.content == ""
 
 
 @pytest.mark.asyncio
@@ -246,3 +247,22 @@ async def test_delta_content_wins_over_reasoning_content() -> None:
     result = await _provider()._parse_streaming_response(response)
 
     assert result.content == "Visible answer"
+
+
+@pytest.mark.asyncio
+async def test_disconnected_stream_does_not_publish_partial_answer() -> None:
+    response = _StreamingResponse([_sse({'choices': [{'delta': {'content': 'Partial answer'}}]})])
+    assert (await _provider()._parse_streaming_response(response)).content == ''
+
+
+@pytest.mark.asyncio
+async def test_reasoning_then_answer_keeps_answer_and_late_sources() -> None:
+    response = _StreamingResponse([
+        _sse({'choices': [{'delta': {'reasoning_content': 'web_search: private activity'}}]}),
+        _sse({'choices': [{'delta': {'content': 'Finished answer'}}]}),
+        _sse({'search_sources': [{'url': 'https://example.test/final'}]}),
+        'data: [DONE]',
+    ])
+    result = await _provider()._parse_streaming_response(response)
+    assert result.content == 'Finished answer'
+    assert result.sources[0].url == 'https://example.test/final'
