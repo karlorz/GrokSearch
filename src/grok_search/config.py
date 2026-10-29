@@ -12,7 +12,7 @@ class Config:
     _SETUP_COMMAND = (
         'claude mcp add-json grok-search --scope user '
         '\'{"type":"stdio","command":"uvx","args":["--from",'
-        '"git+https://github.com/GuDaStudio/GrokSearch","grok-search"],'
+        '"git+https://github.com/karlorz/GrokSearch","grok-search"],'
         '"env":{"GUDA_API_KEY":"your-guda-api-key"}}\''
     )
     _DEFAULT_MODEL = "grok-4.3-fast"

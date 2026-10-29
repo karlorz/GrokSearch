@@ -43,4 +43,4 @@ and stage. Explicit disable is allowed; an unset or other value keeps developmen
     FIRECRAWL_ENABLED=0 uv run --frozen --extra dev pytest -q
     FIRECRAWL_ENABLED=1 uv run --frozen --extra dev pytest -q
 
-Proposal: `projects/grok-search/architecture/2026-10-28-ff01-feature-flag-proposal.md`.
+Proposal: `wiki projects/grok-search/architecture/2026-10-28-ff01-feature-flag-proposal.md`.

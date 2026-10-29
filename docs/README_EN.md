@@ -92,7 +92,8 @@ claude mcp add-json grok-search --scope user '{
     "grok-search"
   ],
   "env": {
-    "GUDA_API_KEY": "your-guda-api-key"
+    "GUDA_API_KEY": "your-guda-api-key",
+    "GUDA_BASE_URL": "https://search.karldigi.dev"
   }
 }'
 ```
@@ -237,7 +238,7 @@ This will automatically modify the **project-level** `.claude/settings.json` `pe
 ## 3. MCP Tools
 
 <details>
-<summary>This project provides eight MCP tools (click to expand)</summary>
+<summary>This project provides 13 MCP tools (click to expand)</summary>
 
 ### `web_search` — AI Web Search
 
@@ -313,9 +314,15 @@ Settings persist to `~/.config/grok-search/config.json` across sessions.
 
 Modifies project-level `.claude/settings.json` `permissions.deny` to disable Claude Code's built-in WebSearch and WebFetch.
 
-### `search_planning` — Search Planning
+### Search Planning Tools
 
-A structured multi-phase planning scaffold to generate an executable search plan before running complex searches.
+Structured multi-phase planning scaffold to generate an executable search plan before running complex searches:
+- `plan_intent` — Phase 1: Analyze user intent and create planning session_id
+- `plan_complexity` — Phase 2: Assess search complexity (Level 1-3) controlling required phases
+- `plan_sub_query` — Phase 3: Add sub-queries (call per sub-query, accumulates)
+- `plan_search_term` — Phase 4: Add search terms (call per term, accumulates)
+- `plan_tool_mapping` — Phase 5: Map sub-queries to tools (web_search / web_fetch / web_map)
+- `plan_execution` — Phase 6: Define parallel groups and sequential execution order
 </details>
 
 ## 4. FAQ
@@ -324,7 +331,7 @@ A structured multi-phase planning scaffold to generate an executable search plan
 <summary>
 Q: Must I configure both Grok and Tavily?
 </summary>
-A: Set `GUDA_API_KEY` to get full Grok + Tavily + Firecrawl service. Without GuDa, Grok (`GROK_API_URL` + `GROK_API_KEY`) is required and provides the core search capability. Tavily is optional — without it, `web_fetch` and `web_map` will return configuration error messages.
+A: Set `GUDA_API_KEY` to get full Grok + Tavily + Firecrawl service. Without GuDa, Grok (`GROK_API_URL` + `GROK_API_KEY`) is required and provides the core search capability. Tavily and Firecrawl are both optional: when Tavily is configured, `web_fetch` prioritizes Tavily Extract, falling back to Firecrawl Scrape on failure; if neither is configured, `web_fetch` returns a configuration error message. `web_map` depends on Tavily.
 </details>
 
 <details>
@@ -351,5 +358,5 @@ A: Say "Show grok-search configuration info" in a Claude conversation to automat
 
 **If this project helps you, please give it a Star!**
 
-[![Star History Chart](https://api.star-history.com/svg?repos=GuDaStudio/GrokSearch&type=date&legend=top-left)](https://www.star-history.com/#GuDaStudio/GrokSearch&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=karlorz/GrokSearch&type=date&legend=top-left)](https://www.star-history.com/#karlorz/GrokSearch&type=date&legend=top-left)
 </div>

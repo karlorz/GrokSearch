@@ -258,7 +258,7 @@ claude mcp list
 ## 三、MCP 工具介绍
 
 <details>
-<summary>本项目提供八个 MCP 工具（展开查看）</summary>
+<summary>本项目提供 13 个 MCP 工具（展开查看）</summary>
 
 ### `web_search` — AI 网络搜索
 
@@ -334,9 +334,15 @@ claude mcp list
 
 修改项目级 `.claude/settings.json` 的 `permissions.deny`，一键禁用 Claude Code 官方的 WebSearch 和 WebFetch。
 
-### `search_planning` — 搜索规划
+### 搜索规划工具 (Search Planning)
 
-结构化搜索规划脚手架（分阶段、多轮），用于在执行复杂搜索前先生成可执行的搜索计划。
+结构化搜索规划脚手架（分阶段、多轮），用于在执行复杂搜索前生成可执行的搜索计划：
+- `plan_intent` — Phase 1: 分析用户意图，生成规划 session_id
+- `plan_complexity` — Phase 2: 评估搜索复杂度（Level 1-3），决定后续阶段
+- `plan_sub_query` — Phase 3: 添加子查询（可多次调用累积）
+- `plan_search_term` — Phase 4: 添加具体检索词（可多次调用累积）
+- `plan_tool_mapping` — Phase 5: 将子查询映射至具体工具（web_search / web_fetch / web_map）
+- `plan_execution` — Phase 6: 定义并行组与串行执行顺序
 </details>
 
 ## 四、常见问题
@@ -372,5 +378,12 @@ A: 在 Claude 对话中说"显示 grok-search 配置信息"，将自动测试 AP
 
 **如果这个项目对您有帮助，请给个 Star！**
 
-[![Star History Chart](https://api.star-history.com/svg?repos=GuDaStudio/GrokSearch&type=date&legend=top-left)](https://www.star-history.com/#GuDaStudio/GrokSearch&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=karlorz/GrokSearch&type=date&legend=top-left)](https://www.star-history.com/#karlorz/GrokSearch&type=date&legend=top-left)
 </div>
+
+---
+
+## 🧹 Repo Hygiene
+
+- Generated images and mockups go to gitignored `out/images/` with dated filenames (e.g. `out/images/YYYY-MM-DD-...`).
+- Never commit secrets, API keys, or session state.
