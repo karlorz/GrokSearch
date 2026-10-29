@@ -1,6 +1,13 @@
 import pytest
 
+from grok_search import features
 from grok_search.config import Config, config
+
+
+@pytest.fixture(autouse=True)
+def isolate_feature_overrides(monkeypatch, tmp_path):
+    """Keep any developer repo-root .features.local.json out of test results."""
+    monkeypatch.setattr(features, "REPO_ROOT", tmp_path)
 
 
 @pytest.fixture
@@ -14,6 +21,7 @@ def isolated_config(monkeypatch, tmp_path):
         "GROK_API_KEY",
         "GROK_API_URL",
         "GROK_MODEL",
+        "GROK_SEARCH_ENV",
         "GROK_SEARCH_MCP_HOST",
         "GROK_SEARCH_MCP_INTERNAL_TOKEN",
         "GROK_SEARCH_MCP_PATH",

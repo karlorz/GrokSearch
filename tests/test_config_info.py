@@ -69,6 +69,34 @@ def test_config_info_without_public_url_does_not_claim_remote_endpoint(monkeypat
     assert "127.0.0.1" not in json.dumps(info)
 
 
+def test_config_info_reports_features_block_without_secrets():
+    info = Config().get_config_info()
+
+    assert info["features"] == [
+        {
+            "id": "tavilyEnabled",
+            "key": "TAVILY_ENABLED",
+            "stage": "stable",
+            "default": True,
+            "effective": True,
+        },
+        {
+            "id": "firecrawlEnabled",
+            "key": "FIRECRAWL_ENABLED",
+            "stage": "stable",
+            "default": True,
+            "effective": True,
+        },
+    ]
+    for entry in info["features"]:
+        assert isinstance(entry["default"], bool)
+        assert isinstance(entry["effective"], bool)
+
+    serialized = json.dumps(info)
+    for forbidden in ["gsk_", "tvly-", "127.0.0.1"]:
+        assert forbidden not in serialized
+
+
 @pytest.mark.parametrize(
     "unsafe_url",
     [

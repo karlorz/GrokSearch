@@ -4,3 +4,4 @@ __pycache__/
 .worktrees/
 mcp.json
 .env
+.features.local.json

@@ -64,6 +64,8 @@ async def test_web_search_merges_structured_fallback_and_extra_sources(
     monkeypatch.setenv("GROK_API_KEY", "test-grok-key")
     monkeypatch.setenv("TAVILY_API_KEY", "test-tavily-key")
     monkeypatch.setenv("FIRECRAWL_API_KEY", "test-firecrawl-key")
+    monkeypatch.setenv("TAVILY_ENABLED", "true")
+    monkeypatch.setenv("FIRECRAWL_ENABLED", "true")
     monkeypatch.setattr(server, "GrokSearchProvider", _FakeGrokProvider)
     monkeypatch.setattr(server, "_call_tavily_search", _fake_tavily)
     monkeypatch.setattr(server, "_call_firecrawl_search", _fake_firecrawl)

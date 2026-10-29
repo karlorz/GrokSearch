@@ -4,6 +4,8 @@ from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from . import features
+
 
 class Config:
     _instance = None
@@ -164,11 +166,11 @@ class Config:
 
     @property
     def tavily_enabled(self) -> bool:
-        return os.getenv("TAVILY_ENABLED", "true").lower() in ("true", "1", "yes")
+        return features.resolve("tavilyEnabled")
 
     @property
     def firecrawl_enabled(self) -> bool:
-        return os.getenv("FIRECRAWL_ENABLED", "true").lower() in ("true", "1", "yes")
+        return features.resolve("firecrawlEnabled")
 
     @property
     def tavily_api_url(self) -> str:
@@ -357,6 +359,7 @@ class Config:
             deprecation_note = f"'{raw_env_model}' 已废弃，已自动规范化为 '{self.canonicalize_model(raw_env_model)}'"
 
         info = {
+            "features": features.effective_features(),
             "mcp_connection": mcp_connection,
             "remote_engine": {
                 "model": self.grok_model,

@@ -123,6 +123,8 @@ async def test_web_search_keeps_full_query_for_provider_calls(
     monkeypatch.setenv("GROK_API_KEY", "test-grok-key")
     monkeypatch.setenv("TAVILY_API_KEY", "test-tavily-key")
     monkeypatch.setenv("FIRECRAWL_API_KEY", "test-firecrawl-key")
+    monkeypatch.setenv("TAVILY_ENABLED", "true")
+    monkeypatch.setenv("FIRECRAWL_ENABLED", "true")
     monkeypatch.setattr(server, "GrokSearchProvider", _RecordingGrokProvider)
     monkeypatch.setattr(server, "_call_tavily_search", _record_tavily)
     monkeypatch.setattr(server, "_call_firecrawl_search", _record_firecrawl)
